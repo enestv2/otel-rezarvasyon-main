@@ -78,6 +78,8 @@ public sealed class HostedStaticMapProviderTests
                 Assert.Equal($"#{expectedColor.Red:X2}{expectedColor.Green:X2}{expectedColor.Blue:X2}",
                     hotelMarker.GetProperty("color").GetString());
                 Assert.Equal("#ffffff", hotelMarker.GetProperty("contentcolor").GetString());
+                Assert.Equal("no", hotelMarker.GetProperty("whitecircle").GetString());
+                Assert.Equal("no", hotelMarker.GetProperty("shadow").GetString());
             }
         }
     }
