@@ -1,15 +1,18 @@
 # Spec 0009 — Profesyonel PDF rapor düzeni
 
-- Status: Draft
+- Status: Layout amendment implemented; verification gate pending
 - Mode: lite
 - Plan: `specs/plans/0009-plan.md`
 - Supersedes: the 30%-size floating detail inset requirement in AC-4 of `specs/active/0008-yakin-harita-liste-sirasi.md`
 
 ## Intent
-Rezervasyon ekibi, PDF'yi ilk bakışta tarayabilmeli; önerilen oteli, tüm otelleri ve harita işaretlerini birbirine karıştırmadan anlayabilmelidir. Belge düzenli, dengeli ve A4 ekranda/çıktıda okunaklı görünmelidir. Harita genel görünümü ve yakın planı ayrı alanlarda, başlıkları ve kısa bir görsel açıklamasıyla sunmalıdır. Otel sırası, rota seçimi, fiyatlar ve mevcut rapor verileri aynı kalır.
+Rezervasyon ekibi PDF'nin ilk sayfasında bütçe ve ulaşım açısından önemli otel seçeneklerini hızlıca karşılaştırabilmeli, ikinci sayfada harita ve ayrıntılı otel tablosuna bakabilmelidir. Belge A4 boyutunda okunaklı kalmalı; otel değerleri simgelerle kolay taranmalıdır. Otel sırası, seçim kuralları, fiyatlar ve JSON öneri verileri değişmez.
 
 ## Requirements
-- Önerilen otel, raporun en belirgin bilgi kartında sunulur; otel adı ve karar için önemli mesafe, süre ve fiyat kolayca taranır.
+- PDF'nin ilk sayfasında yalnızca bütçe öncelikli (en düşük gecelik tutar) ve ulaşım öncelikli (en uygun ölçülmüş ulaşım) seçenekleri sunulur; dengeli seçenek PDF'de gösterilmez.
+- Turuncu özet kartları otel/seçenek adını ve yol mesafesi, yol süresi, yürüme mesafesi, yürüme süresi ve gecelik tutar değerlerini simge + değer biçiminde gösterir; bu alanda açıklama paragrafları bulunmaz.
+- Özet kartlarının ardından LLM destekli açıklama, daha ekonomik oteli ve ulaşım açısından uygun seçeneği gerekçeleriyle açıklar.
+- Harita raporun ikinci sayfasında üstte yer alır; değerlendirme tablosu aynı sayfada haritanın altından başlar ve gerekirse sonraki sayfalara taşar.
 - Genel harita ve yakın plan ayrı panellerde gösterilir; yakın plan genel haritanın üstünü kapatmaz.
 - Her harita panelinin başlığı ne gösterdiğini doğru açıklar. Yakın plan, listedeki ilk en fazla iki uygun otel ve yürüme rotalarını gösterir.
 - Harita işaretleri ve PDF tablo sıraları eşleşir. Seçili otel ile diğer oteller renk ve çizgi örüntüsüyle ayırt edilir.
@@ -18,18 +21,20 @@ Rezervasyon ekibi, PDF'yi ilk bakışta tarayabilmeli; önerilen oteli, tüm ote
 - Belgedeki tüm mevcut rapor bilgileri, atıflar, erişilebilir harita yedeği ve sayfa numaraları korunur.
 
 ## Constraints & out of scope
-- Öneri sırası, otel seçimi, yürüyüş uygunluk kuralı, mesafe/süre/fiyat değerleri ve JSON sözleşmesi değişmez.
+- Öneri sırası, otel seçimi, yürüyüş uygunluk kuralı, mesafe/süre/fiyat değerleri ve JSON sözleşmesi değişmez. Dengeli tercihi yalnızca PDF görünümünden çıkar; iç politika/JSON davranışı korunur.
 - Yeni harita sağlayıcısı veya yeni veri kaynağı eklenmez.
 - Marka kılavuzu verilmediği için mevcut kurumsal lacivert/turuncu renk paleti korunur.
 - Tasarım A4 dikey PDF ve mevcut Türkçe içerik için yapılır.
 
 ## Acceptance criteria
-- [ ] AC-1 — PDF'de başlık, etkinlik alanı, önerilen otel, haritalar ve değerlendirme tablosu belirgin bir görsel sırada sunulur; önerilen otel ilk bakışta ayırt edilir.
-- [ ] AC-2 — Genel görünüm ve yakın plan ayrı, başlıklı panellerde yer alır; hiçbir harita diğerinin üstünü kapatmaz ve panel başlıkları içerikle eşleşir.
-- [ ] AC-3 — Rapor sıra numaraları harita rozetleriyle eşleşir; seçili otel/rota ile diğer oteller/rotalar açıklamadaki renk ve örüntüyle ayırt edilir.
-- [ ] AC-4 — Otel tablosu A4 sayfa genişliğinde başlık ve değerleri kırpmadan gösterir; yol, yürüme ve fiyat sütunları kolay taranır.
-- [ ] AC-5 — Mevcut rapor verileri, PDF/JSON öneri eşitliği, atıflar, yedek harita ve sayfa numaraları korunur.
-- [ ] AC-6 — Üretilen PDF'nin gerçek sayfa görüntüsü incelenir ve metin/harita örtüşmesi, okunamayan başlık veya kesilen içerik bulunmadığı kanıtlanır.
+- [x] AC-1 — İlk sayfada yalnızca bütçe öncelikli ve ulaşım öncelikli özetler yer alır; dengeli seçenek PDF kartlarında ve tablo ek açıklamalarında görünmez. Kanıt: PDF integration assertions.
+- [x] AC-2 — Turuncu özet kartlarında otel adı ve yol/yürüme mesafe-süreleri ile fiyat ilgili simge ve değerlerle gösterilir; uzun açıklama metni kartların içinde değildir. Ardından LLM destekli maliyet/uygunluk açıklaması yer alır. Kanıt: PDF integration test + rendered page 1 image.
+- [x] AC-3 — Harita ikinci sayfanın üstünde, otel tablosu aynı sayfada haritanın altında başlar; uzun tablolar başlıklarını tekrarlayarak devam edebilir. Kanıt: PDF page-order integration test + 20-hotel pagination test.
+- [x] AC-4 — Genel görünüm ve yakın plan ayrı, başlıklı panellerde yer alır; hiçbir harita diğerinin üstünü kapatmaz ve panel başlıkları içerikle eşleşir. Kanıt: static map provider tests + rendered page 2 image.
+- [x] AC-5 — Rapor sıra numaraları harita rozetleriyle eşleşir; seçili otel/rota ile diğer oteller/rotalar açıklamadaki renk ve örüntüyle ayırt edilir. Kanıt: existing map/provider and PDF legend assertions.
+- [x] AC-6 — Otel tablosu A4 sayfa genişliğinde başlık ve değerleri kırpmadan gösterir; yol, yürüme ve fiyat sütunları kolay taranır. Kanıt: PDF extraction/bounds and long-name pagination tests.
+- [x] AC-7 — Mevcut rapor verileri, PDF/JSON öneri eşitliği, atıflar, yedek harita ve sayfa numaraları korunur. Kanıt: PDF integration suite.
+- [x] AC-8 — Üretilen PDF'nin gerçek sayfa görüntüsü incelenir ve metin/harita örtüşmesi, okunamayan başlık veya kesilen içerik bulunmadığı kanıtlanır. Kanıt: `specs/evidence/0009-pdf-layout-page1.png` and `page2.png`.
 
 ## Definition of Done
 - [ ] Every acceptance criterion mapped to proof (test or reproducible observation)

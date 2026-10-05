@@ -16,6 +16,8 @@ namespace RPAOtelRezervasyon.Infrastructure.Providers.Reporting;
 public sealed class QuestPdfRecommendationReportRenderer : IRecommendationReportRenderer
 {
     private const string FontFamily = "Lato";
+    private static readonly CultureInfo TurkishCulture = CultureInfo.GetCultureInfo("tr-TR");
+    private static readonly TimeZoneInfo TurkeyTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Istanbul");
 
     public Task<ReportDocument> RenderAsync(RecommendationReport report, CancellationToken cancellationToken)
     {
@@ -35,13 +37,27 @@ public sealed class QuestPdfRecommendationReportRenderer : IRecommendationReport
             page.Margin(32);
             page.DefaultTextStyle(style => style.FontFamily(FontFamily).FontSize(10).FontColor(Colors.Grey.Darken4));
 
-            page.Header().Element(element => ComposeHeader(element, report));
-
             page.Content().PaddingVertical(12).Column(column =>
             {
-                column.Spacing(14);
+                column.Spacing(10);
+                column.Item().Element(element => ComposeHeader(element, report));
                 column.Item().Element(element => ComposeRecommendationOptions(element, report));
+                column.Item().Element(element => ComposeRecommendationExplanation(element, report));
+            });
 
+            ComposeFooter(page);
+        });
+
+        container.Page(page =>
+        {
+            page.Size(PageSizes.A4);
+            page.Margin(32);
+            page.DefaultTextStyle(style => style.FontFamily(FontFamily).FontSize(10).FontColor(Colors.Grey.Darken4));
+            page.Header().Element(element => ComposeLegacyHeader(element, report));
+
+            page.Content().PaddingTop(22).PaddingBottom(12).Column(column =>
+            {
+                column.Spacing(10);
                 if (report.Map is not null)
                 {
                     column.Item().Element(element => ComposeMap(element, report.Map));
@@ -59,17 +75,43 @@ public sealed class QuestPdfRecommendationReportRenderer : IRecommendationReport
                 }
             });
 
-            page.Footer().AlignCenter().Text(text =>
-            {
-                text.Span("Sayfa ").FontSize(8).FontColor(Colors.Grey.Darken1);
-                text.CurrentPageNumber().FontSize(8).FontColor(Colors.Grey.Darken1);
-                text.Span(" / ").FontSize(8).FontColor(Colors.Grey.Darken1);
-                text.TotalPages().FontSize(8).FontColor(Colors.Grey.Darken1);
-            });
+            ComposeFooter(page);
         });
     }
 
+    private static void ComposeFooter(PageDescriptor page) => page.Footer().AlignCenter().Text(text =>
+    {
+        text.Span("Sayfa ").FontSize(8).FontColor(Colors.Grey.Darken1);
+        text.CurrentPageNumber().FontSize(8).FontColor(Colors.Grey.Darken1);
+        text.Span(" / ").FontSize(8).FontColor(Colors.Grey.Darken1);
+        text.TotalPages().FontSize(8).FontColor(Colors.Grey.Darken1);
+    });
+
     private static void ComposeHeader(IContainer container, RecommendationReport report)
+    {
+        container.Column(column =>
+        {
+            column.Spacing(2);
+            column.Item().Text(report.Title.ToUpper(TurkishCulture)).FontSize(22).Bold().FontColor(Colors.Blue.Darken3);
+            column.Item().Text(report.VenueName).FontSize(13).SemiBold().FontColor(Colors.Grey.Darken2);
+            if (report.Personnel is { } personnel)
+            {
+                column.Item().Text(text =>
+                {
+                    text.Span("Talep sahibi  ").FontSize(9).FontColor(Colors.Grey.Darken1);
+                    text.Span($"{personnel.FirstName} {personnel.LastName}").FontSize(9).SemiBold();
+                    text.Span($"  ·  Sicil {personnel.RegistrationNumber}").FontSize(9).FontColor(Colors.Grey.Darken1);
+                });
+            }
+            var localGeneratedAt = TimeZoneInfo.ConvertTime(report.GeneratedAtUtc, TurkeyTimeZone);
+            column.Item().Text($"{localGeneratedAt.ToString("dd MMMM yyyy · HH:mm", TurkishCulture)} TSİ")
+                .FontSize(8.5f)
+                .FontColor(Colors.Grey.Darken1);
+            column.Item().PaddingTop(5).LineHorizontal(1).LineColor(Colors.Grey.Lighten2);
+        });
+    }
+
+    private static void ComposeLegacyHeader(IContainer container, RecommendationReport report)
     {
         container.Column(column =>
         {
@@ -89,28 +131,161 @@ public sealed class QuestPdfRecommendationReportRenderer : IRecommendationReport
 
     private static void ComposeRecommendationOptions(IContainer container, RecommendationReport report)
     {
+        var visibleOptions = report.Options
+            .Where(option => option.Strategy is RecommendationStrategy.BudgetPriority or RecommendationStrategy.TransportPriority)
+            .OrderBy(option => option.Strategy == RecommendationStrategy.TransportPriority ? 0 : 1)
+            .ToArray();
+
         container.Column(column =>
         {
             column.Spacing(8);
-            column.Item().Text("OTEL SEÇENEKLERİ").FontSize(11).SemiBold().FontColor(Colors.Orange.Darken3);
-            foreach (var option in report.Options)
+            column.Item().Text("ÖNERİLEN OTELLER").FontSize(11).SemiBold().FontColor(Colors.Orange.Darken3);
+            foreach (var option in visibleOptions)
             {
-                column.Item().Border(1).BorderColor(Colors.Grey.Lighten2).Padding(9).Column(card =>
+                if (option.Hotel is not { } hotel)
                 {
-                    card.Spacing(3);
-                    card.Item().Text(StrategyLabel(option.Strategy)).FontSize(9).SemiBold().FontColor(Colors.Orange.Darken3);
-                    if (option.Hotel is { } hotel)
+                    column.Item().Border(1).BorderColor(Colors.Grey.Lighten2).CornerRadius(8).Padding(12)
+                        .Text(string.IsNullOrWhiteSpace(option.Explanation) ? "Bu seçenek için otel belirlenemedi." : option.Explanation)
+                        .FontSize(9).FontColor(Colors.Grey.Darken2).ClampLines(2);
+                    continue;
+                }
+
+                var roleLabel = option.Strategy == RecommendationStrategy.TransportPriority ? "ÖNERİLEN" : "ALTERNATİF";
+                column.Item().Border(1).BorderColor(Colors.Grey.Lighten2).Background(Colors.White)
+                    .CornerRadius(8).Padding(11).Column(card =>
                     {
-                        card.Item().Text(hotel.Name).FontSize(14).SemiBold();
-                        card.Item().Text($"Mesafe: {RecommendationMetricFormatter.Distance(hotel.DistanceMeters)} · Süre: {RecommendationMetricFormatter.RoadDuration(hotel)} · Mesafe türü: {FormatKind(hotel.DistanceKind)} · Gecelik ücret: {RecommendationMetricFormatter.Price(hotel.Price)}")
-                            .FontSize(9);
-                    }
-                    card.Item().Text(option.Explanation).FontSize(9);
+                        card.Spacing(6);
+                        card.Item().Row(top =>
+                        {
+                            top.RelativeItem().Column(identity =>
+                            {
+                                identity.Item().Row(badges =>
+                                {
+                                    badges.AutoItem().Background(option.Strategy == RecommendationStrategy.TransportPriority
+                                            ? Colors.Orange.Lighten5 : Colors.Grey.Lighten4)
+                                        .PaddingHorizontal(6).PaddingVertical(3)
+                                        .Text(roleLabel).FontSize(7.5f).SemiBold()
+                                        .FontColor(option.Strategy == RecommendationStrategy.TransportPriority
+                                            ? Colors.Orange.Darken3 : Colors.Grey.Darken2);
+                                    badges.AutoItem().PaddingLeft(6).AlignMiddle()
+                                        .Text(StrategyLabel(option.Strategy)).FontSize(7.5f).FontColor(Colors.Grey.Darken1);
+                                });
+                                identity.Item().PaddingTop(4).Text(hotel.Name).FontSize(13).SemiBold()
+                                    .FontColor(Colors.Grey.Darken4);
+                            });
+                            top.AutoItem().AlignRight().Column(price =>
+                            {
+                                price.Item().AlignRight().Text(FormatCardPrice(hotel.Price))
+                                    .FontSize(16).Bold().FontColor(Colors.Blue.Darken3);
+                                price.Item().AlignRight().Text("tahmini gecelik").FontSize(7.5f)
+                                    .FontColor(Colors.Grey.Darken1);
+                            });
+                        });
+                        card.Item().PaddingTop(1).Row(metrics =>
+                        {
+                            metrics.Spacing(5);
+                            Metric(metrics, MetricIcon.Location, "MESAFE", RecommendationMetricFormatter.Distance(hotel.DistanceMeters));
+                            Metric(metrics, MetricIcon.Car, "ARAÇ", RecommendationMetricFormatter.RoadDuration(hotel));
+                            if (hotel.WalkingRouteRequested)
+                            {
+                                var walkingValue = hotel.WalkingMetrics is null
+                                    ? "Hesaplanamadı"
+                                    : $"{RecommendationMetricFormatter.Distance(hotel.WalkingMetrics.DistanceMeters)} · {RecommendationMetricFormatter.WalkingDuration(hotel.WalkingMetrics)}";
+                                Metric(metrics, MetricIcon.Walking, "YÜRÜME", walkingValue);
+                            }
+                        });
+                        if (!string.IsNullOrWhiteSpace(option.Explanation))
+                        {
+                            card.Item().PaddingTop(1).Text(ShortReason(option.Explanation)).FontSize(8.5f)
+                                .FontColor(Colors.Grey.Darken2).ClampLines(2);
+                        }
+                    });
+            }
+        });
+    }
+
+    private static string ShortReason(string reason)
+    {
+        var sentenceEnd = reason.IndexOf(". ", StringComparison.Ordinal);
+        if (sentenceEnd >= 0)
+        {
+            reason = reason[..(sentenceEnd + 1)];
+        }
+
+        const int maxLength = 120;
+        if (reason.Length <= maxLength)
+        {
+            return reason;
+        }
+
+        var lastSpace = reason.LastIndexOf(' ', maxLength - 1);
+        return $"{reason[..(lastSpace > 0 ? lastSpace : maxLength - 1)].TrimEnd()}…";
+    }
+
+    private static void ComposeRecommendationExplanation(IContainer container, RecommendationReport report)
+    {
+        container.Column(column =>
+        {
+            column.Spacing(4);
+            column.Item().Text("ÖNERİ ÖZETİ").FontSize(9.5f).SemiBold().FontColor(Colors.Grey.Darken2);
+            foreach (var option in report.Options
+                         .Where(option => option.Strategy is RecommendationStrategy.TransportPriority or RecommendationStrategy.BudgetPriority)
+                         .OrderBy(option => option.Strategy == RecommendationStrategy.TransportPriority ? 0 : 1))
+            {
+                if (option.Hotel is not { } hotel)
+                {
+                    continue;
+                }
+
+                var summary = option.Strategy == RecommendationStrategy.TransportPriority
+                    ? $"Ulaşım önceliğinde {hotel.Name} öne çıkıyor."
+                    : $"Bütçe açısından {hotel.Name} daha avantajlı.";
+                column.Item().Row(row =>
+                {
+                    row.Spacing(5);
+                    row.AutoItem().Text("•").FontColor(Colors.Orange.Darken2);
+                    row.RelativeItem().Text(summary).FontSize(8.5f).FontColor(Colors.Grey.Darken2).ClampLines(2);
                 });
             }
-            column.Item().Text("Fiyatlar istekte iletilen gecelik tutarlardır; rezervasyon teklifi veya teyidi değildir.")
-                .FontSize(8).Italic().FontColor(Colors.Grey.Darken1);
+            column.Item().PaddingTop(3)
+                .Text("Fiyatlar istekte iletilen yaklaşık tutarlardır; rezervasyon teklifi veya teyidi değildir.")
+                .FontSize(7.5f).Italic().FontColor(Colors.Grey.Darken1);
         });
+    }
+
+    private static void Metric(RowDescriptor row, MetricIcon icon, string label, string value)
+    {
+        row.RelativeItem().Column(metric =>
+        {
+            metric.Spacing(1);
+            metric.Item().Row(content =>
+            {
+                content.AutoItem().AlignMiddle().Width(13).Height(13).Svg(MetricIconSvg(icon));
+                content.AutoItem().PaddingLeft(3).AlignMiddle().Text(label).FontSize(6.5f)
+                    .SemiBold().FontColor(Colors.Grey.Darken1);
+            });
+            metric.Item().Text(value).FontSize(8.5f).SemiBold().FontColor(Colors.Grey.Darken4);
+        });
+    }
+
+    private static string MetricIconSvg(MetricIcon icon)
+    {
+        var paths = icon switch
+        {
+            MetricIcon.Location => "<path d=\"M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z\"/><circle cx=\"12\" cy=\"10\" r=\"2.5\"/>",
+            MetricIcon.Car => "<path d=\"m5 11 1.5-5h11l1.5 5M3 11h18v7H3z\"/><path d=\"M6 18v2m12-2v2M6 14h.01M18 14h.01\"/>",
+            MetricIcon.Walking => "<circle cx=\"14\" cy=\"4\" r=\"2\"/><path d=\"m12 8-3 4 3 2-2 6m2-12 4 3 3-1m-7 4-4 5m6-6 4 5\"/>",
+            _ => throw new ArgumentOutOfRangeException(nameof(icon)),
+        };
+
+        return $"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#334155\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\">{paths}</svg>";
+    }
+
+    private enum MetricIcon
+    {
+        Location,
+        Car,
+        Walking,
     }
 
     private static string StrategyLabel(RecommendationStrategy strategy) => strategy switch
@@ -238,7 +413,8 @@ public sealed class QuestPdfRecommendationReportRenderer : IRecommendationReport
 
                     var alternate = index % 2 == 1;
                     var optionLabels = string.Join(", ", report.Options
-                        .Where(option => option.Hotel?.Name == row.Name)
+                        .Where(option => option.Strategy is RecommendationStrategy.BudgetPriority or RecommendationStrategy.TransportPriority
+                            && option.Hotel?.Name == row.Name)
                         .Select(option => StrategyLabel(option.Strategy)));
                     var hotelLabel = string.IsNullOrEmpty(optionLabels) ? row.Name : $"{row.Name} ({optionLabels})";
                     BodyCell(table, string.Create(CultureInfo.InvariantCulture, $"{index + 1}"), row.IsSelected, alternate);
@@ -285,7 +461,7 @@ public sealed class QuestPdfRecommendationReportRenderer : IRecommendationReport
             cell = cell.Background(Colors.Grey.Lighten5);
         }
 
-        cell.Padding(5).Text(text).FontSize(9);
+        cell.ShowEntire().Padding(5).Text(text).FontSize(9);
     }
 
     private static string FormatDistance(int meters) => RecommendationMetricFormatter.Distance(meters);
@@ -306,6 +482,12 @@ public sealed class QuestPdfRecommendationReportRenderer : IRecommendationReport
         kind == DistanceKind.Road ? "Yol" : "Düz çizgi";
 
     private static string FormatPrice(NightlyPrice price) => RecommendationMetricFormatter.Price(price);
+
+    private static string FormatCardPrice(NightlyPrice price)
+    {
+        var amountFormat = price.Amount == decimal.Truncate(price.Amount) ? "#,##0" : "#,##0.00";
+        return $"{price.Amount.ToString(amountFormat, TurkishCulture)} {price.Currency}";
+    }
 
     /// <summary>Etkinlik alanı adından ASCII-güvenli, kültürden bağımsız bir dosya adı üretir.</summary>
     private static string BuildFileName(string venueName)

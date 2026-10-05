@@ -112,6 +112,8 @@ public sealed class RecommendationsPdfEndpointTests
 
         var bytes = await response.Content.ReadAsByteArrayAsync();
         var words = ReadWords(bytes);
+        using var document = PdfDocument.Open(bytes);
+        var firstPage = document.GetPage(1).Text;
 
         // AC-9: Türkçe karakterler bozulmadan görünür (İ, ş, ö).
         Assert.Contains("İstanbul", words);
@@ -124,37 +126,105 @@ public sealed class RecommendationsPdfEndpointTests
         // Fiyat ve metrikler invariant biçimde yazılır.
         var text = ReadText(bytes);
         Assert.Contains("1250 TRY", text, StringComparison.Ordinal);
-        Assert.Contains("OTEL SEÇENEKLERİ", text, StringComparison.Ordinal);
-        Assert.Contains("BÜTÇE ÖNCELİKLİ", text, StringComparison.Ordinal);
+        Assert.Contains("ÖNERİLEN OTELLER", text, StringComparison.Ordinal);
         Assert.Contains("ULAŞIM ÖNCELİKLİ", text, StringComparison.Ordinal);
-        Assert.Contains("DENGE", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("DENGE", text, StringComparison.Ordinal);
         Assert.Contains("rezervasyon teklifi veya teyidi değildir", text, StringComparison.Ordinal);
         Assert.Contains("S12345", text, StringComparison.Ordinal);
         Assert.Contains("Ada Yılmaz", text, StringComparison.Ordinal);
+        Assert.Contains("TSİ", text, StringComparison.Ordinal);
+        Assert.DoesNotContain(" UTC", firstPage, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Post_pdf_shows_three_policy_options_and_price_transport_tradeoffs()
+    public async Task Post_pdf_shows_only_budget_and_transport_options_with_explanation_after_metric_cards()
     {
         using var factory = CreateFactory();
         using var client = CreateAuthorizedClient(factory);
 
         var response = await client.PostAsJsonAsync(
             "/api/recommendations/pdf",
-            RequestBody(Venue, Hotel(NearHotel, 950m, "TRY"), Hotel(FarHotel, 1000m, "TRY")));
+            RequestBody(Venue, Hotel(NearHotel, 163.25m, "TRY"), Hotel(FarHotel, 1250.50m, "TRY")));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var text = ReadText(await response.Content.ReadAsByteArrayAsync());
+        var pdf = await response.Content.ReadAsByteArrayAsync();
+        SaveLayoutPreviewWhenRequested(pdf);
+        using var document = PdfDocument.Open(pdf);
+        Assert.True(document.NumberOfPages >= 2);
+        var firstPage = document.GetPage(1).Text;
+        var secondPage = document.GetPage(2).Text;
+        var text = ReadText(pdf);
         var normalized = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
         Assert.Contains("BÜTÇE ÖNCELİKLİ", normalized, StringComparison.Ordinal);
         Assert.Contains("ULAŞIM ÖNCELİKLİ", normalized, StringComparison.Ordinal);
-        Assert.Contains("DENGE", normalized, StringComparison.Ordinal);
+        Assert.DoesNotContain("DENGE", normalized, StringComparison.Ordinal);
         Assert.Contains(NearHotel, normalized, StringComparison.Ordinal);
         Assert.Contains(FarHotel, normalized, StringComparison.Ordinal);
-        Assert.Contains("%5.3", normalized, StringComparison.Ordinal);
-        Assert.Contains("daha uzundur", normalized, StringComparison.Ordinal);
-        Assert.Contains("yürüyüş rotası ayrıca 800 m ve 10 dk", normalized, StringComparison.Ordinal);
-        Assert.Contains("rezervasyon teklifi veya teyidi değildir", normalized, StringComparison.Ordinal);
+        Assert.Contains("800 m", normalized, StringComparison.Ordinal);
+        Assert.Contains("10 dk", normalized, StringComparison.Ordinal);
+        Assert.Contains("1.250,50 TRY", normalized, StringComparison.Ordinal);
+        Assert.Contains("163,25 TRY", normalized, StringComparison.Ordinal);
+        Assert.Contains("ÖNERİ ÖZETİ", normalized, StringComparison.Ordinal);
+        Assert.Contains("Fiyatlar istekte iletilen yaklaşık tutarlardır; rezervasyon teklifi veya teyidi değildir", normalized, StringComparison.Ordinal);
+        Assert.DoesNotContain("DENGE", firstPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("Mesafe:", firstPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("-/-", firstPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("undefined", firstPage, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("null", firstPage, StringComparison.OrdinalIgnoreCase);
+        Assert.True(firstPage.IndexOf("ÖNERİ ÖZETİ", StringComparison.Ordinal)
+            > firstPage.IndexOf("950 TRY", StringComparison.Ordinal));
+        Assert.True(secondPage.IndexOf("HARİTA GÖRÜNÜMÜ", StringComparison.Ordinal)
+            < secondPage.IndexOf("Değerlendirilen oteller", StringComparison.Ordinal));
+        Assert.Contains("Belge üretim zamanı:", secondPage, StringComparison.Ordinal);
+        Assert.Contains("UTC", secondPage, StringComparison.Ordinal);
+        Assert.Contains("Sayfa 2 / 2", secondPage, StringComparison.Ordinal);
+        Assert.Contains("Sayfa 1 / 2", firstPage, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(5)]
+    public async Task Post_pdf_first_page_fits_dynamic_hotel_counts_and_long_option_names(int hotelCount)
+    {
+        using var factory = CreateFactory();
+        using var client = CreateAuthorizedClient(factory);
+        var names = new[]
+        {
+            "Holiday Inn Ankara Çukurambar - Grand Convention and Business District",
+            "Sheraton Ankara Hotel & Convention Center",
+            "Ankara Central International Congress Residence",
+            "Başkent Premium Business Hotel and Conference Center",
+            "Anatolia Grand Convention and Event Hotel Ankara",
+        };
+        var hotels = new object[hotelCount];
+        for (var index = 0; index < hotelCount; index++)
+        {
+            var latitude = index == 0 ? 41.0100 : 41.0800 + (index * 0.01);
+            factory.Geocoding.Locations[names[index]] = new GeoPoint(latitude, 28.9784);
+            var price = index switch
+            {
+                0 => 163m,
+                1 => 121m,
+                _ => 121m + (index * 100m),
+            };
+            hotels[index] = Hotel(names[index], price, "TRY");
+        }
+
+        var response = await client.PostAsJsonAsync("/api/recommendations/pdf", RequestBody(Venue, hotels));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var pdf = await response.Content.ReadAsByteArrayAsync();
+        SaveLayoutPreviewWhenRequested(pdf);
+        using var document = PdfDocument.Open(pdf);
+        var firstPage = string.Join(' ', document.GetPage(1).Text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        Assert.Contains(names[0], firstPage, StringComparison.Ordinal);
+        Assert.Contains(names[1], firstPage, StringComparison.Ordinal);
+        Assert.Contains("163 TRY", firstPage, StringComparison.Ordinal);
+        Assert.Contains("121 TRY", firstPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("-/-", firstPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("undefined", firstPage, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("null", firstPage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -170,7 +240,7 @@ public sealed class RecommendationsPdfEndpointTests
         var bytes = await response.Content.ReadAsByteArrayAsync();
 
         using var document = PdfDocument.Open(bytes);
-        var page = document.GetPage(1);
+        var page = document.GetPage(2);
 
         // AC-4: coğrafi görsel belgeye gömülür.
         Assert.True(page.NumberOfImages > 0, "Belgede coğrafi görsel (image) beklenir.");
@@ -195,13 +265,13 @@ public sealed class RecommendationsPdfEndpointTests
         Assert.Contains("apiKey=integration-map-key", handler.LastUri!.Query, StringComparison.Ordinal);
         var pdf = await response.Content.ReadAsByteArrayAsync();
         using var document = PdfDocument.Open(pdf);
-        Assert.True(document.GetPage(1).NumberOfImages > 0);
+        Assert.True(document.GetPage(2).NumberOfImages > 0);
         var text = ReadText(pdf);
         var normalizedText = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
         Assert.Equal(1, CountOccurrences(text, "Geoapify"));
         Assert.Contains("HARİTA GÖRÜNÜMÜ", normalizedText, StringComparison.Ordinal);
         Assert.Contains("Numaralar otel tablosundaki sırayı gösterir.", normalizedText, StringComparison.Ordinal);
-        Assert.Contains("en düşük girilen tutara", normalizedText, StringComparison.Ordinal);
+        Assert.Contains("en düşük seçenek", normalizedText, StringComparison.Ordinal);
         Assert.Contains("Kadıköy Oteli", normalizedText, StringComparison.Ordinal);
         Assert.Contains("Şişli Oteli", normalizedText, StringComparison.Ordinal);
         Assert.Contains("Varış: etkinlik alanı", normalizedText, StringComparison.Ordinal);
@@ -242,13 +312,13 @@ public sealed class RecommendationsPdfEndpointTests
         Assert.True(handler.CallCount >= 1);
         var pdf = await response.Content.ReadAsByteArrayAsync();
         using var document = PdfDocument.Open(pdf);
-        Assert.True(document.GetPage(1).NumberOfImages > 0);
+        Assert.True(document.GetPage(2).NumberOfImages > 0);
         var text = ReadText(pdf);
         var normalizedText = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
         Assert.Contains("Şematik görünüm", normalizedText, StringComparison.Ordinal);
         Assert.Contains("HARİTA GÖRÜNÜMÜ", normalizedText, StringComparison.Ordinal);
         Assert.Contains("Numaralar otel tablosundaki sırayı gösterir.", normalizedText, StringComparison.Ordinal);
-        Assert.Contains("en düşük girilen tutara", normalizedText, StringComparison.Ordinal);
+        Assert.Contains("en düşük seçenek", normalizedText, StringComparison.Ordinal);
         Assert.Contains("Kadıköy Oteli", normalizedText, StringComparison.Ordinal);
         Assert.Contains("Şişli Oteli", normalizedText, StringComparison.Ordinal);
         Assert.Contains("Varış: etkinlik alanı", normalizedText, StringComparison.Ordinal);
@@ -275,6 +345,7 @@ public sealed class RecommendationsPdfEndpointTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var pdf = await response.Content.ReadAsByteArrayAsync();
+        SaveLayoutPreviewWhenRequested(pdf);
         using var document = PdfDocument.Open(pdf);
         Assert.True(document.NumberOfPages > 1, "Twenty long hotel names should paginate.");
         var pages = document.GetPages().ToArray();
@@ -441,7 +512,7 @@ public sealed class RecommendationsPdfEndpointTests
         var text = ReadText(await pdfResponse.Content.ReadAsByteArrayAsync());
         var normalized = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
         Assert.Contains("YÜRÜME", normalized, StringComparison.Ordinal);
-        Assert.Contains("Mesafe", normalized, StringComparison.Ordinal);
+        Assert.DoesNotContain("Mesafe:", normalized, StringComparison.Ordinal);
         Assert.Contains("800 m", text, StringComparison.Ordinal);
 
         // JSON'un belirlenimci seçimi değişmez; PDF'de otel ve ulaşım öncelikli etiketi bulunur.
@@ -452,12 +523,9 @@ public sealed class RecommendationsPdfEndpointTests
         var selectedDuration = selected.GetProperty("durationSeconds").GetInt32();
         var selectedKind = selected.GetProperty("distanceKind").GetString()!;
 
-        // Beyaz boşluk farklarını yok sayarak seçilen otel kartının metrik satırını birebir karşılaştır.
-        var expectedCardLine = string.Create(
-            CultureInfo.InvariantCulture,
-            $"Mesafe: {FormatDistance(selectedDistance)} · Süre: {FormatDuration(selectedDuration, selectedKind)} · Mesafe türü: {FormatKind(selectedKind)} · Gecelik ücret: {FormatPrice(selectedAmount, selectedCurrency)}");
-
-        Assert.Contains(expectedCardLine, normalized, StringComparison.Ordinal);
+        Assert.Contains(FormatDistance(selectedDistance), normalized, StringComparison.Ordinal);
+        Assert.Contains(FormatDuration(selectedDuration, selectedKind), normalized, StringComparison.Ordinal);
+        Assert.Contains(FormatPrice(selectedAmount, selectedCurrency), normalized, StringComparison.Ordinal);
 
     }
 
@@ -558,6 +626,18 @@ public sealed class RecommendationsPdfEndpointTests
 
     private static int CountOccurrences(string text, string value) =>
         text.Split(value, StringSplitOptions.None).Length - 1;
+
+    private static void SaveLayoutPreviewWhenRequested(byte[] pdf)
+    {
+        var outputPath = Environment.GetEnvironmentVariable("RPA_PDF_LAYOUT_PREVIEW_PATH");
+        if (string.IsNullOrWhiteSpace(outputPath))
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+        File.WriteAllBytes(outputPath, pdf);
+    }
 
     private sealed class StaticMapHttpHandler(HttpStatusCode statusCode = HttpStatusCode.OK) : HttpMessageHandler
     {
