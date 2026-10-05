@@ -1,0 +1,15 @@
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+
+# Logs
+*.log
+
+# .NET build output
+bin/
+obj/
+
+# Claude Code personal settings (shared settings.json IS committed after init)
+.claude/settings.local.json
