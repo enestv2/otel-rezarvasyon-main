@@ -209,11 +209,9 @@ public sealed class HostedStaticMapProvider(HttpClient httpClient, IOptions<Stat
                 ["lon"] = hotel.Location.Longitude,
                 ["type"] = "circle",
                 ["color"] = $"#{color.Red:X2}{color.Green:X2}{color.Blue:X2}",
-                ["contentcolor"] = "#ffffff",
                 ["size"] = hotel.IsSelected ? 24 : 22,
                 ["contentsize"] = 14,
                 ["whitecircle"] = "no",
-                ["shadow"] = "no",
                 ["text"] = (index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture),
             });
         }

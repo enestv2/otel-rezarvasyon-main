@@ -25,7 +25,7 @@ PDF haritasinda etkinlik ve otel isaretleri taban haritadaki kendi koordinatlari
 - [x] AC-2 Fit etkinlik, otel ve rota noktalarini 32 px ic boslukla cizim alaninda tutar. Kanit: `StaticMapProjectionTests.Fit_centers_venue_and_hotel_coordinates_in_the_map_viewport` her noktanin piksel sinirini denetler.
 - [x] AC-3 Sematik harita mevcut koordinat projeksiyonunu korur. Kanit: Schematic provider testleri tam test kosusunda gecti.
 - [x] AC-4 Hosted istekte sabit center/zoom gonderilmez ve hem tek hem cok otelli fixture'larda etkinlik/otel koordinatlari native marker olarak gonderilir. Kanit: `HostedStaticMapProviderTests.RenderAsync_sends_all_locations_as_native_markers_and_auto_fits_for_hotel_count`.
-- [x] AC-5 Hosted overlay yerel etkinlik pini ve otel rozeti cizmez; otel numaralari renkli dolgu ve beyaz rakamla Geoapify marker JSON'unda bulunur. Beyaz icerik arkasindaki varsayilan beyaz daire ve golge kapatilidir. Kanit: HostedStaticMapProviderTests request assertion'lari ve mock basemap pixel assertion'lari.
+- [x] AC-5 Hosted overlay yerel etkinlik pini ve otel rozeti cizmez; otel numaralari renkli dolgu ve beyaz rakamla Geoapify marker JSON'unda bulunur. `whitecircle: no` ile dolu renkli daire kullanilir. Kanit: HostedStaticMapProviderTests request assertion'lari ve mock basemap pixel assertion'lari.
 
 ## Definition of Done
 - [ ] Her kabul kriteri test veya tekrar edilebilir gozlemle kanitlanir.

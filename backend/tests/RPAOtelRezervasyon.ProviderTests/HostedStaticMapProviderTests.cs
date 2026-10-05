@@ -77,9 +77,9 @@ public sealed class HostedStaticMapProviderTests
                 var expectedColor = StaticMapOverlay.RouteColor(hotel.IsSelected, hotelIndex);
                 Assert.Equal($"#{expectedColor.Red:X2}{expectedColor.Green:X2}{expectedColor.Blue:X2}",
                     hotelMarker.GetProperty("color").GetString());
-                Assert.Equal("#ffffff", hotelMarker.GetProperty("contentcolor").GetString());
                 Assert.Equal("no", hotelMarker.GetProperty("whitecircle").GetString());
-                Assert.Equal("no", hotelMarker.GetProperty("shadow").GetString());
+                Assert.False(hotelMarker.TryGetProperty("contentcolor", out _));
+                Assert.False(hotelMarker.TryGetProperty("shadow", out _));
             }
         }
     }
