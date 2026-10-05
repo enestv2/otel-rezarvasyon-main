@@ -74,10 +74,15 @@ public sealed class RecommendationsPdfEndpointTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(1, factory.WalkingRouting.CallCount);
-        var text = ReadText(await response.Content.ReadAsByteArrayAsync());
+        var pdf = await response.Content.ReadAsByteArrayAsync();
+        var text = ReadText(pdf);
+        using var document = PdfDocument.Open(pdf);
+        var firstPage = document.GetPage(1).Text;
         var normalized = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
         Assert.Contains("YÜRÜME", normalized, StringComparison.Ordinal);
         Assert.Contains("Alınamadı", normalized, StringComparison.Ordinal);
+        Assert.Contains("Hesaplanamadı", firstPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("-/-", firstPage, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -144,7 +149,7 @@ public sealed class RecommendationsPdfEndpointTests
 
         var response = await client.PostAsJsonAsync(
             "/api/recommendations/pdf",
-            RequestBody(Venue, Hotel(NearHotel, 163.25m, "TRY"), Hotel(FarHotel, 1250.50m, "TRY")));
+            RequestBody(Venue, Hotel(NearHotel, 950m, "TRY"), Hotel(FarHotel, 1000m, "TRY")));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var pdf = await response.Content.ReadAsByteArrayAsync();
@@ -162,8 +167,8 @@ public sealed class RecommendationsPdfEndpointTests
         Assert.Contains(FarHotel, normalized, StringComparison.Ordinal);
         Assert.Contains("800 m", normalized, StringComparison.Ordinal);
         Assert.Contains("10 dk", normalized, StringComparison.Ordinal);
-        Assert.Contains("1.250,50 TRY", normalized, StringComparison.Ordinal);
-        Assert.Contains("163,25 TRY", normalized, StringComparison.Ordinal);
+        Assert.Contains("1000 TRY", normalized, StringComparison.Ordinal);
+        Assert.Contains("950 TRY", normalized, StringComparison.Ordinal);
         Assert.Contains("ÖNERİ ÖZETİ", normalized, StringComparison.Ordinal);
         Assert.Contains("Fiyatlar istekte iletilen yaklaşık tutarlardır; rezervasyon teklifi veya teyidi değildir", normalized, StringComparison.Ordinal);
         Assert.DoesNotContain("DENGE", firstPage, StringComparison.Ordinal);
@@ -179,6 +184,22 @@ public sealed class RecommendationsPdfEndpointTests
         Assert.Contains("UTC", secondPage, StringComparison.Ordinal);
         Assert.Contains("Sayfa 2 / 2", secondPage, StringComparison.Ordinal);
         Assert.Contains("Sayfa 1 / 2", firstPage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Post_pdf_formats_fractional_card_prices_with_Turkish_separators()
+    {
+        using var factory = CreateFactory();
+        using var client = CreateAuthorizedClient(factory);
+        var response = await client.PostAsJsonAsync(
+            "/api/recommendations/pdf",
+            RequestBody(Venue, Hotel(NearHotel, 163.25m, "TRY"), Hotel(FarHotel, 1250.50m, "TRY")));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var document = PdfDocument.Open(await response.Content.ReadAsByteArrayAsync());
+        var firstPage = string.Join(' ', document.GetPage(1).Text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        Assert.Contains("1.250,50 TRY", firstPage, StringComparison.Ordinal);
+        Assert.Contains("163,25 TRY", firstPage, StringComparison.Ordinal);
     }
 
     [Theory]
