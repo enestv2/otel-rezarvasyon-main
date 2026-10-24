@@ -36,6 +36,8 @@ public static class GeoapifyServiceCollectionExtensions
             ResiliencePolicies.CreateProviderRateLimiter(provider.GetRequiredService<IOptions<GeoapifyOptions>>().Value.RequestsPerSecond));
         services.AddKeyedSingleton<RateLimiter>(GeoapifyRouteDistanceProvider.Id, (provider, _) =>
             ResiliencePolicies.CreateProviderRateLimiter(provider.GetRequiredService<IOptions<GeoapifyOptions>>().Value.RequestsPerSecond));
+        services.AddKeyedSingleton<RateLimiter>(GeoapifyAirportSearchProvider.Id, (provider, _) =>
+            ResiliencePolicies.CreateProviderRateLimiter(provider.GetRequiredService<IOptions<GeoapifyOptions>>().Value.RequestsPerSecond));
 
         services.AddHttpClient<GeoapifyGeocodingProvider>((provider, client) =>
             {
@@ -69,13 +71,31 @@ public static class GeoapifyServiceCollectionExtensions
                     .AddTimeout(TimeSpan.FromSeconds(10));
             });
 
+        services.AddHttpClient<GeoapifyAirportSearchProvider>((provider, client) =>
+            {
+                client.BaseAddress = new Uri(provider.GetRequiredService<IOptions<GeoapifyOptions>>().Value.BaseUrl.TrimEnd('/') + "/", UriKind.Absolute);
+                client.Timeout = Timeout.InfiniteTimeSpan;
+            })
+            .AddResilienceHandler("geoapify-airport-search-resilience", (builder, context) =>
+            {
+                var options = context.ServiceProvider.GetRequiredService<IOptions<GeoapifyOptions>>().Value;
+                var limiter = context.ServiceProvider.GetRequiredKeyedService<RateLimiter>(GeoapifyAirportSearchProvider.Id);
+                builder.AddRateLimiter(ResiliencePolicies.CreateRateLimiterStrategy(limiter))
+                    .AddTimeout(TimeSpan.FromSeconds(30))
+                    .AddRetry(ResiliencePolicies.CreateRetry(options.RetryMaxAttempts))
+                    .AddCircuitBreaker(ResiliencePolicies.CreateCircuitBreaker())
+                    .AddTimeout(TimeSpan.FromSeconds(10));
+            });
+
         services.AddLogging(logging =>
         {
             logging.AddFilter("System.Net.Http.HttpClient.GeoapifyGeocodingProvider", LogLevel.None);
             logging.AddFilter("System.Net.Http.HttpClient.GeoapifyRouteDistanceProvider", LogLevel.None);
+            logging.AddFilter("System.Net.Http.HttpClient.GeoapifyAirportSearchProvider", LogLevel.None);
         });
         services.AddTransient<IGeocodingProvider>(provider => provider.GetRequiredService<GeoapifyGeocodingProvider>());
         services.AddTransient<IRouteDistanceProvider>(provider => provider.GetRequiredService<GeoapifyRouteDistanceProvider>());
+        services.AddTransient<IAirportSearchProvider>(provider => provider.GetRequiredService<GeoapifyAirportSearchProvider>());
         services.AddTransient<IWalkingRouteDistanceProvider>(provider => provider.GetRequiredService<GeoapifyRouteDistanceProvider>());
 
         return services;

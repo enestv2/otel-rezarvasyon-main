@@ -4,6 +4,7 @@ using System.Text.Json;
 using RPAOtelRezervasyon.Api.Auth;
 using RPAOtelRezervasyon.Domain.Models;
 using RPAOtelRezervasyon.IntegrationTests.Support;
+using RPAOtelRezervasyon.Infrastructure.Providers.Reporting;
 using UglyToad.PdfPig;
 using System.Globalization;
 using SkiaSharp;
@@ -20,6 +21,24 @@ public sealed class RecommendationsPdfEndpointTests
     private const string Venue = "İstanbul Kongre Merkezi";
     private const string NearHotel = "Şişli Oteli";
     private const string FarHotel = "Kadıköy Oteli";
+
+    [Fact]
+    public async Task Renderer_converts_fixed_utc_timestamp_across_turkiye_date_boundary()
+    {
+        var hotel = new HotelReportRow("Test Oteli", 900, 600, DistanceKind.Road,
+            new NightlyPrice(1250.50m, "TRY"), true, new GeoPoint(39.9, 32.8));
+        var report = new RecommendationReport("Otel Önerisi", "Congresium Ankara", hotel, [hotel], [], null,
+            new DateTimeOffset(2026, 10, 5, 22, 30, 0, TimeSpan.Zero));
+        var renderer = new QuestPdfRecommendationReportRenderer();
+
+        var rendered = await renderer.RenderAsync(report, CancellationToken.None);
+        using var document = PdfDocument.Open(rendered.Content.ToArray());
+        var firstPage = string.Join(' ', document.GetPage(1).Text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+        Assert.Contains("06 Ekim 2026", firstPage, StringComparison.Ordinal);
+        Assert.Contains("01:30 TSİ", firstPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("05 Ekim 2026", firstPage, StringComparison.Ordinal);
+    }
 
     [Fact]
     public async Task Post_pdf_without_api_key_is_rejected_and_providers_are_not_called()
@@ -93,7 +112,7 @@ public sealed class RecommendationsPdfEndpointTests
 
         var response = await client.PostAsJsonAsync("/api/recommendations/pdf", new
         {
-            venueName = Venue,
+            eventCenterName = Venue,
             eventCity = "Ankara",
             hotels = new[] { Hotel(NearHotel) },
         });
@@ -180,8 +199,8 @@ public sealed class RecommendationsPdfEndpointTests
             > firstPage.IndexOf("950 TRY", StringComparison.Ordinal));
         Assert.True(secondPage.IndexOf("HARİTA GÖRÜNÜMÜ", StringComparison.Ordinal)
             < secondPage.IndexOf("Değerlendirilen oteller", StringComparison.Ordinal));
-        Assert.Contains("Belge üretim zamanı:", secondPage, StringComparison.Ordinal);
-        Assert.Contains("UTC", secondPage, StringComparison.Ordinal);
+        Assert.Contains("TSİ", secondPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("UTC", secondPage, StringComparison.Ordinal);
         Assert.Contains("Sayfa 2 / 2", secondPage, StringComparison.Ordinal);
         Assert.Contains("Sayfa 1 / 2", firstPage, StringComparison.Ordinal);
     }
@@ -729,12 +748,12 @@ public sealed class RecommendationsPdfEndpointTests
     private static object Hotel(string name, decimal amount = 1500m, string currency = "TRY") =>
         new { name, price = new { amount, currency } };
 
-    private static object RequestBody(string venueName, params object[] hotels) => new
+    private static object RequestBody(string eventCenterName, params object[] hotels) => new
     {
         personnelRegistrationNumber = "S12345",
         personnelFirstName = "Ada",
         personnelLastName = "Yılmaz",
-        venueName,
+        eventCenterName,
         eventCity = "Ankara",
         eventCountry = "Turkey",
         hotels,

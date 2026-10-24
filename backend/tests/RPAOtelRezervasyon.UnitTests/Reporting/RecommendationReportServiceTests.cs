@@ -9,7 +9,7 @@ namespace RPAOtelRezervasyon.UnitTests.Reporting;
 
 public class RecommendationReportServiceTests
 {
-    private const string VenueName = "Kongre Merkezi";
+    private const string EventCenterName = "Kongre Merkezi";
     private const string NearHotel = "Yakın Otel";
     private const string FarHotel = "Uzak Otel";
 
@@ -28,7 +28,7 @@ public class RecommendationReportServiceTests
         var (service, renderer, _, walkingProvider) = CreateService();
         var result = SucceededResult(800m, "EUR", unresolved: []);
 
-        var document = await service.CreateAsync(VenueName, result, CancellationToken.None);
+        var document = await service.CreateAsync(EventCenterName, result, CancellationToken.None);
 
         document.Should().BeSameAs(renderer.Document);
         document.IsPdf.Should().BeTrue();
@@ -42,7 +42,7 @@ public class RecommendationReportServiceTests
         report.Options.Single(option => option.Strategy == RecommendationStrategy.TransportPriority).Hotel!.Name.Should().Be(NearHotel);
         report.Explanation.Should().Contain("10 dk");
         report.Explanation.Should().Contain("850 m");
-        report.VenueName.Should().Be(VenueName);
+        report.EventCenterName.Should().Be(EventCenterName);
         report.RankedHotels.Select(row => row.Name).Should().ContainInOrder(NearHotel, FarHotel);
 
         // AC-2 / AC-3: satırlardaki metrik ve fiyatlar JSON yanıtındaki değerlerle aynıdır.
@@ -82,7 +82,7 @@ public class RecommendationReportServiceTests
             new RecommendationExplanationService(provider, new RecommendationExplanationOptions(true)),
             new ReportingOptions());
 
-        await service.CreateAsync(VenueName, SucceededResult(800m, "EUR", unresolved: []), CancellationToken.None);
+        await service.CreateAsync(EventCenterName, SucceededResult(800m, "EUR", unresolved: []), CancellationToken.None);
 
         renderer.LastReport!.Options.Single(option => option.Strategy == RecommendationStrategy.TransportPriority).Explanation
             .Should().Contain("ölçülen yol rotaları içinde en kısa tahmini yolculuk süresine sahip");
@@ -96,7 +96,7 @@ public class RecommendationReportServiceTests
         var (service, renderer, _, _) = CreateService();
         var result = SucceededResult(800m, "EUR", unresolved: [FarHotel]);
 
-        var document = await service.CreateAsync(VenueName, result, CancellationToken.None);
+        var document = await service.CreateAsync(EventCenterName, result, CancellationToken.None);
 
         document.IsPdf.Should().BeTrue();
         renderer.LastReport!.UnresolvedHotels.Should().ContainInOrder(FarHotel);
@@ -107,7 +107,7 @@ public class RecommendationReportServiceTests
     {
         var (service, renderer, mapProvider, _) = CreateService();
 
-        await service.CreateAsync(VenueName, SucceededResult(800m, "EUR", unresolved: []), CancellationToken.None);
+        await service.CreateAsync(EventCenterName, SucceededResult(800m, "EUR", unresolved: []), CancellationToken.None);
 
         mapProvider.CallCount.Should().Be(1);
         var request = mapProvider.LastRequest!;
@@ -141,9 +141,9 @@ public class RecommendationReportServiceTests
         var near = Candidate(NearHotel, 41.1, 29.1, 3000, 600, 1250m, "TRY", pathSegments: segments);
         var far = Candidate(FarHotel, 41.2, 29.2, 8000, 1800, 800m, "EUR");
         var result = RecommendationResult.Succeeded(
-            VenueName, VenueLocation, new Recommendation([near, far], near), Rationale.For(near, 2), []);
+            EventCenterName, VenueLocation, new Recommendation([near, far], near), Rationale.For(near, 2), []);
 
-        await service.CreateAsync(VenueName, result, CancellationToken.None);
+        await service.CreateAsync(EventCenterName, result, CancellationToken.None);
 
         var marker = mapProvider.LastRequest!.Markers.Single(item => item.Label == NearHotel);
         marker.PathSegments.Should().HaveCount(2);
@@ -160,7 +160,7 @@ public class RecommendationReportServiceTests
             new RouteMetrics(1200, 900, DistanceKind.Road, walkingPath));
         var result = SucceededResult(800m, "EUR", unresolved: []);
 
-        await service.CreateAsync(VenueName, result, CancellationToken.None);
+        await service.CreateAsync(EventCenterName, result, CancellationToken.None);
 
         var marker = mapProvider.LastRequest!.Markers.Single(item => item.Label == NearHotel);
         marker.Path.Should().Equal(walkingPath);
@@ -178,7 +178,7 @@ public class RecommendationReportServiceTests
         var (service, renderer, mapProvider, _) = CreateService();
         mapProvider.Status = status;
 
-        var document = await service.CreateAsync(VenueName, SucceededResult(800m, "EUR", unresolved: []), CancellationToken.None);
+        var document = await service.CreateAsync(EventCenterName, SucceededResult(800m, "EUR", unresolved: []), CancellationToken.None);
 
         // AC-8: görsel üretilemese de belge üretilir.
         document.IsPdf.Should().BeTrue();
@@ -192,15 +192,15 @@ public class RecommendationReportServiceTests
         var (service, renderer, _, _) = CreateService();
         var result = SucceededResult(800m, "EUR", unresolved: []);
 
-        await service.CreateAsync(VenueName, result, CancellationToken.None);
+        await service.CreateAsync(EventCenterName, result, CancellationToken.None);
         var first = renderer.LastReport!;
 
-        await service.CreateAsync(VenueName, result, CancellationToken.None);
+        await service.CreateAsync(EventCenterName, result, CancellationToken.None);
         var second = renderer.LastReport!;
 
         second.RankedHotels.Should().Equal(first.RankedHotels);
         second.SelectedHotel.Should().Be(first.SelectedHotel);
-        second.VenueName.Should().Be(first.VenueName);
+        second.EventCenterName.Should().Be(first.EventCenterName);
     }
 
     [Fact]
@@ -210,9 +210,9 @@ public class RecommendationReportServiceTests
         var near = Candidate(NearHotel, 41.1, 29.1, 1000, 600, 1250m, "TRY", path: NearPath);
         var far = Candidate(FarHotel, 41.2, 29.2, 4000, 0, 800m, "EUR", DistanceKind.StraightLine);
         var recommendation = new Recommendation([near, far], near);
-        var result = RecommendationResult.Succeeded(VenueName, VenueLocation, recommendation, Rationale.For(near, 2), []);
+        var result = RecommendationResult.Succeeded(EventCenterName, VenueLocation, recommendation, Rationale.For(near, 2), []);
 
-        await service.CreateAsync(VenueName, result, CancellationToken.None);
+        await service.CreateAsync(EventCenterName, result, CancellationToken.None);
 
         // AC-3/AC-5: düz çizgi fallback satırı mesafeyi taşır, süre ölçülmedi (0) olarak korunur (BR-6).
         var row = renderer.LastReport!.RankedHotels.Single(candidate => candidate.Name == FarHotel);
@@ -229,10 +229,10 @@ public class RecommendationReportServiceTests
         var boundary = Candidate("Boundary", 41.02, 29.02, 3000, 250, 200m, "TRY");
         var fallback = Candidate("Fallback", 41.03, 29.03, 1000, 0, 300m, "TRY", DistanceKind.StraightLine);
         var recommendation = new Recommendation([under, boundary, fallback], under);
-        var result = RecommendationResult.Succeeded(VenueName, VenueLocation, recommendation, Rationale.For(under, 3), []);
+        var result = RecommendationResult.Succeeded(EventCenterName, VenueLocation, recommendation, Rationale.For(under, 3), []);
         walkingProvider.RouteResolver = (_, _) => RouteOutcome.ProviderError();
 
-        await service.CreateAsync(VenueName, result, CancellationToken.None);
+        await service.CreateAsync(EventCenterName, result, CancellationToken.None);
 
         walkingProvider.Calls.Should().ContainSingle().Which.Should().Be((under.Location, VenueLocation));
         var rows = renderer.LastReport!.RankedHotels;
@@ -257,7 +257,7 @@ public class RecommendationReportServiceTests
             new RecommendationExplanationService(new FakeExplanationProvider(), new RecommendationExplanationOptions(false)),
             new ReportingOptions { MaxDocumentBytes = 16 });
 
-        var act = async () => await service.CreateAsync(VenueName, SucceededResult(800m, "EUR", unresolved: []), CancellationToken.None);
+        var act = async () => await service.CreateAsync(EventCenterName, SucceededResult(800m, "EUR", unresolved: []), CancellationToken.None);
 
         await act.Should().ThrowAsync<InvalidOperationException>();
     }
@@ -266,9 +266,9 @@ public class RecommendationReportServiceTests
     public async Task CreateAsync_throws_when_the_result_is_not_successful()
     {
         var (service, _, _, _) = CreateService();
-        var failed = RecommendationResult.VenueNotResolved(VenueName);
+        var failed = RecommendationResult.VenueNotResolved(EventCenterName);
 
-        var act = async () => await service.CreateAsync(VenueName, failed, CancellationToken.None);
+        var act = async () => await service.CreateAsync(EventCenterName, failed, CancellationToken.None);
 
         await act.Should().ThrowAsync<InvalidOperationException>();
     }
@@ -306,7 +306,7 @@ public class RecommendationReportServiceTests
         var recommendation = new Recommendation([near, far], near);
 
         return RecommendationResult.Succeeded(
-            VenueName,
+            EventCenterName,
             VenueLocation,
             recommendation,
             Rationale.For(near, 2),

@@ -12,6 +12,8 @@ public sealed record RecommendationReportOption(
     HotelReportRow? Hotel,
     string Explanation);
 
+public sealed record UnresolvedHotelReportRow(string Name, NightlyPrice? NightlyPrice);
+
 /// <summary>PDF satırı: temel rota/fiyat değerleri JSON ile aynıdır; yürüyüş ölçümleri yalnızca PDF'ye özeldir.</summary>
 public sealed record HotelReportRow
 {
@@ -33,6 +35,12 @@ public sealed record HotelReportRow
 
     public bool WalkingRouteRequested { get; }
 
+    public TaxiFareEstimate? TaxiFareEstimate { get; }
+
+    public NightlyPrice? TotalNightlyCost { get; }
+
+    public TripCostEstimate? TripCostEstimate { get; }
+
     public HotelReportRow(
         string name,
         int distanceMeters,
@@ -42,7 +50,10 @@ public sealed record HotelReportRow
         bool isSelected,
         GeoPoint location,
         RouteMetrics? walkingMetrics = null,
-        bool walkingRouteRequested = false)
+        bool walkingRouteRequested = false,
+        TaxiFareEstimate? taxiFareEstimate = null,
+        NightlyPrice? totalNightlyCost = null,
+        TripCostEstimate? tripCostEstimate = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentOutOfRangeException.ThrowIfNegative(distanceMeters);
@@ -59,6 +70,9 @@ public sealed record HotelReportRow
         Location = location;
         WalkingMetrics = walkingMetrics;
         WalkingRouteRequested = walkingRouteRequested;
+        TaxiFareEstimate = taxiFareEstimate;
+        TotalNightlyCost = totalNightlyCost;
+        TripCostEstimate = tripCostEstimate;
     }
 }
 
@@ -70,13 +84,23 @@ public sealed record RecommendationReport
 {
     public string Title { get; }
 
-    public string VenueName { get; }
+    public string EventCenterName { get; }
+
+    public string? CityName { get; }
+
+    public string? CountryName { get; }
+
+    public DateOnly? TaskStartDate { get; }
+
+    public DateOnly? TaskEndDate { get; }
 
     public HotelReportRow SelectedHotel { get; }
 
     public IReadOnlyList<HotelReportRow> RankedHotels { get; }
 
     public IReadOnlyList<string> UnresolvedHotels { get; }
+
+    public IReadOnlyList<UnresolvedHotelReportRow> UnresolvedHotelDetails { get; }
 
     public StaticMapImage? Map { get; }
 
@@ -88,9 +112,13 @@ public sealed record RecommendationReport
 
     public IReadOnlyList<RecommendationReportOption> Options { get; }
 
+    public bool PreferCityCenter { get; }
+
+    public NearestAirportInfo? NearestAirport { get; }
+
     public RecommendationReport(
         string title,
-        string venueName,
+        string eventCenterName,
         HotelReportRow selectedHotel,
         IReadOnlyList<HotelReportRow> rankedHotels,
         IReadOnlyList<string> unresolvedHotels,
@@ -98,10 +126,17 @@ public sealed record RecommendationReport
         DateTimeOffset generatedAtUtc,
         PersonnelInfo? personnel = null,
         string explanation = "",
-        IReadOnlyList<RecommendationReportOption>? options = null)
+        IReadOnlyList<RecommendationReportOption>? options = null,
+        bool preferCityCenter = false,
+        NearestAirportInfo? nearestAirport = null,
+        string? cityName = null,
+        DateOnly? taskStartDate = null,
+        DateOnly? taskEndDate = null,
+        string? countryName = null,
+        IReadOnlyList<UnresolvedHotelReportRow>? unresolvedHotelDetails = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
-        ArgumentException.ThrowIfNullOrWhiteSpace(venueName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(eventCenterName);
         ArgumentNullException.ThrowIfNull(selectedHotel);
         ArgumentNullException.ThrowIfNull(rankedHotels);
         ArgumentNullException.ThrowIfNull(unresolvedHotels);
@@ -117,14 +152,21 @@ public sealed record RecommendationReport
         }
 
         Title = title;
-        VenueName = venueName;
+        EventCenterName = eventCenterName;
+        CityName = cityName;
+        CountryName = countryName;
+        TaskStartDate = taskStartDate;
+        TaskEndDate = taskEndDate;
         SelectedHotel = selectedHotel;
         RankedHotels = rankedHotels;
         UnresolvedHotels = unresolvedHotels;
+        UnresolvedHotelDetails = unresolvedHotelDetails ?? [];
         Map = map;
         GeneratedAtUtc = generatedAtUtc;
         Personnel = personnel;
         Explanation = explanation;
         Options = options ?? [];
+        PreferCityCenter = preferCityCenter;
+        NearestAirport = nearestAirport;
     }
 }

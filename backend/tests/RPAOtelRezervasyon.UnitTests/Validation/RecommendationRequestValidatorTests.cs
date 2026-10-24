@@ -34,12 +34,12 @@ public class RecommendationRequestValidatorTests
     [InlineData("")]
     [InlineData("   ")]
     [InlineData(null)]
-    public void Validate_rejects_blank_venue_name(string? venueName)
+    public void Validate_rejects_blank_venue_name(string? eventCenterName)
     {
-        var result = RecommendationRequestValidator.Validate(venueName, [Hotel("Grand Hotel")]);
+        var result = RecommendationRequestValidator.Validate(eventCenterName, [Hotel("Grand Hotel")]);
 
         result.IsValid.Should().BeFalse();
-        result.Issues.Should().Contain(issue => issue.Code == "venue-name-required");
+        result.Issues.Should().Contain(issue => issue.Code == "event-center-name-required");
     }
 
     [Fact]
@@ -69,17 +69,17 @@ public class RecommendationRequestValidatorTests
     {
         var result = RecommendationRequestValidator.Validate("ab", [Hotel("Grand Hotel")]);
 
-        result.Issues.Should().Contain(issue => issue.Code == "venue-name-length");
+        result.Issues.Should().Contain(issue => issue.Code == "event-center-name-length");
     }
 
     [Fact]
     public void Validate_rejects_venue_name_longer_than_the_limit()
     {
-        var longName = new string('a', RecommendationRequestValidator.MaxVenueNameLength + 1);
+        var longName = new string('a', RecommendationRequestValidator.MaxEventCenterNameLength + 1);
 
         var result = RecommendationRequestValidator.Validate(longName, [Hotel("Grand Hotel")]);
 
-        result.Issues.Should().Contain(issue => issue.Code == "venue-name-length");
+        result.Issues.Should().Contain(issue => issue.Code == "event-center-name-length");
     }
 
     [Fact]

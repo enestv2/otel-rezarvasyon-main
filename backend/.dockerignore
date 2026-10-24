@@ -1,0 +1,10 @@
+.git/
+.idea/
+**/bin/
+**/obj/
+**/TestResults/
+**/Properties/launchSettings.json
+**/appsettings.Development.json
+**/appsettings.*.local.json
+**/secrets.json
+RPAOtelRezervasyon.sln.DotSettings.user

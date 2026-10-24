@@ -6,7 +6,7 @@ namespace RPAOtelRezervasyon.Infrastructure.Providers.StaticMap;
 
 internal static class StaticMapOverlay
 {
-    private static readonly SKColor SelectedConnectorColor = new(234, 88, 12);
+    private static readonly SKColor SelectedConnectorColor = new(5, 150, 105);
     internal static readonly SKColor DestinationColor = new(220, 38, 38);
     internal const float DestinationPinScale = 1.1f;
     private static readonly SKColor[] HotelColors =
@@ -28,7 +28,7 @@ internal static class StaticMapOverlay
 
     public static void Draw(SKCanvas canvas, StaticMapRequest request, Func<GeoPoint, SKPoint> project,
         IReadOnlyList<int>? markerRanks = null, bool selectedRouteOnly = false, bool drawRoutes = true,
-        bool drawVenue = true, bool drawHotels = true)
+        bool drawVenue = true, bool drawHotels = true, float selectedMarkerScale = 1f)
     {
         var venue = project(request.Venue);
         if (drawRoutes)
@@ -37,7 +37,7 @@ internal static class StaticMapOverlay
         }
         if (drawHotels)
         {
-            DrawHotels(canvas, request, venue, project, markerRanks);
+            DrawHotels(canvas, request, venue, project, markerRanks, selectedMarkerScale);
         }
         if (drawVenue)
         {
@@ -103,7 +103,7 @@ internal static class StaticMapOverlay
     }
 
     private static void DrawHotels(SKCanvas canvas, StaticMapRequest request, SKPoint venue, Func<GeoPoint, SKPoint> project,
-        IReadOnlyList<int>? markerRanks)
+        IReadOnlyList<int>? markerRanks, float selectedMarkerScale)
     {
         var points = request.Markers.Select(marker => project(marker.Location)).ToArray();
         var selectedIndex = request.Markers
@@ -112,7 +112,7 @@ internal static class StaticMapOverlay
             .Select(item => item.index)
             .DefaultIfEmpty(-1)
             .First();
-        var labelCenters = PlaceMarkerLabels(points, venue, canvas.LocalClipBounds, selectedIndex);
+        var labelCenters = PlaceMarkerLabels(points, venue, canvas.LocalClipBounds, selectedIndex, selectedMarkerScale);
         var labels = new List<SKRect>(points.Length);
         using var leaderCasing = new SKPaint
         {
@@ -135,7 +135,7 @@ internal static class StaticMapOverlay
             var rank = markerRanks?[index] ?? index;
             var color = RouteColor(marker.IsSelected, rank);
             var labelCenter = labelCenters[index];
-            var radius = BadgeRadius(index, selectedIndex);
+            var radius = BadgeRadius(index, selectedIndex, selectedMarkerScale);
             var labelBounds = new SKRect(labelCenter.X - radius, labelCenter.Y - radius,
                 labelCenter.X + radius, labelCenter.Y + radius);
             labels.Add(labelBounds);
@@ -155,12 +155,43 @@ internal static class StaticMapOverlay
                 canvas.DrawCircle(point, 1.8f, anchor);
             }
 
-            canvas.DrawCircle(labelCenter, radius + 1.5f, halo);
-            halo.Color = SKColors.White;
             using var badge = new SKPaint { Color = color, IsAntialias = true };
-            canvas.DrawCircle(labelCenter, radius, badge);
-            DrawCenteredText(canvas, (rank + 1).ToString(CultureInfo.InvariantCulture), labelCenter, font, labelPaint);
+            if (marker.IsSelected)
+            {
+                DrawStar(canvas, labelCenter, radius + 2, halo);
+                DrawStar(canvas, labelCenter, radius + 1, badge);
+                DrawCenteredText(canvas, (rank + 1).ToString(CultureInfo.InvariantCulture), labelCenter, font, labelPaint);
+            }
+            else
+            {
+                canvas.DrawCircle(labelCenter, radius + 1.5f, halo);
+                canvas.DrawCircle(labelCenter, radius, badge);
+                DrawCenteredText(canvas, (rank + 1).ToString(CultureInfo.InvariantCulture), labelCenter, font, labelPaint);
+            }
         }
+    }
+
+    private static void DrawStar(SKCanvas canvas, SKPoint center, float radius, SKPaint paint)
+    {
+        using var star = new SKPathBuilder();
+        for (var point = 0; point < 10; point++)
+        {
+            var angle = (-MathF.PI / 2) + (point * MathF.PI / 5);
+            var pointRadius = point % 2 == 0 ? radius : radius * 0.46f;
+            var x = center.X + (MathF.Cos(angle) * pointRadius);
+            var y = center.Y + (MathF.Sin(angle) * pointRadius);
+            if (point == 0)
+            {
+                star.MoveTo(x, y);
+            }
+            else
+            {
+                star.LineTo(x, y);
+            }
+        }
+        star.Close();
+        using var path = star.Detach();
+        canvas.DrawPath(path, paint);
     }
 
     private static void DrawVenue(SKCanvas canvas, SKPoint point)
@@ -177,7 +208,8 @@ internal static class StaticMapOverlay
         destination.Close();
         using var path = destination.Detach();
         canvas.Save();
-        canvas.Translate(point.X, point.Y);
+        // The geographic coordinate must coincide with the pin tip, not its visual center.
+        canvas.Translate(point.X, point.Y - (12 * DestinationPinScale));
         canvas.Scale(DestinationPinScale);
         canvas.DrawPath(path, halo);
         canvas.DrawPath(path, paint);
@@ -193,13 +225,13 @@ internal static class StaticMapOverlay
     }
 
     internal static IReadOnlyList<SKPoint> PlaceMarkerLabels(IReadOnlyList<SKPoint> points, SKPoint venue, SKRect clip,
-        int selectedIndex = -1)
+        int selectedIndex = -1, float selectedMarkerScale = 1f)
     {
         var labels = new List<SKRect>(points.Count);
         var centers = new List<SKPoint>(points.Count);
         for (var index = 0; index < points.Count; index++)
         {
-            var radius = BadgeRadius(index, selectedIndex);
+            var radius = BadgeRadius(index, selectedIndex, selectedMarkerScale);
             var center = PlaceLabel(points[index], venue, index, points, labels, clip, radius);
             centers.Add(center);
             labels.Add(new SKRect(center.X - radius, center.Y - radius, center.X + radius, center.Y + radius));
@@ -214,9 +246,12 @@ internal static class StaticMapOverlay
         var best = point;
         var bestScore = float.MaxValue;
         var venueBounds = new SKRect(venue.X - 19, venue.Y - 19, venue.X + 19, venue.Y + 19);
-        for (var distance = 0f; distance <= 96; distance += 2)
+        var maxDisplacement = Math.Min(
+            Math.Max(96f, points.Count * ((radius * 2) + 6)),
+            Math.Max(96f, Math.Min(clip.Width, clip.Height) / 2));
+        for (var distance = 0f; distance <= maxDisplacement; distance += 2)
         {
-            var steps = distance == 0 ? 1 : 32;
+            var steps = distance == 0 ? 1 : 48;
             for (var step = 0; step < steps; step++)
             {
                 var angle = ((step + (index * 5)) % steps) * (MathF.Tau / steps);
@@ -260,7 +295,8 @@ internal static class StaticMapOverlay
         return width * height;
     }
 
-    private static float BadgeRadius(int index, int selectedIndex) => index == selectedIndex ? SelectedLabelRadius : LabelRadius;
+    private static float BadgeRadius(int index, int selectedIndex, float selectedMarkerScale = 1f) =>
+        index == selectedIndex ? SelectedLabelRadius * selectedMarkerScale : LabelRadius;
 
     internal static SKColor HotelColor(int index) => HotelColors[index % HotelColors.Length];
 

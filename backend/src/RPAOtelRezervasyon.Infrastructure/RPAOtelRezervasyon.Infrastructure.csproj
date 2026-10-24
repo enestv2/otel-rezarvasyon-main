@@ -32,4 +32,8 @@
     <InternalsVisibleTo Include="RPAOtelRezervasyon.ProviderTests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="../../assets/logo.svg" LogicalName="RPAOtelRezervasyon.Infrastructure.Resources.logo.svg" />
+  </ItemGroup>
+
 </Project>

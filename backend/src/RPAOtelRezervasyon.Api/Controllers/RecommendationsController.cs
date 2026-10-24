@@ -68,13 +68,21 @@ public sealed class RecommendationsController(
             return failure;
         }
 
-        var venueName = result.VenueName
+        var eventCenterName = result.EventCenterName
             ?? throw new InvalidOperationException("Başarılı sonuçta etkinlik alanı adı bulunmalıdır.");
         var document = await reportService.CreateAsync(
-            venueName,
+            eventCenterName,
             result,
             new PersonnelInfo(request.PersonnelRegistrationNumber, request.PersonnelFirstName, request.PersonnelLastName),
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            request.EventCity,
+            request.TaskStartDate,
+            request.TaskEndDate,
+            request.EventCountry,
+            request.Hotels?.Select(hotel => new RequestedHotel(
+                hotel?.Name,
+                hotel?.Price?.Amount,
+                hotel?.Price?.Currency)).ToArray()).ConfigureAwait(false);
 
         return File(document.Content.ToArray(), document.ContentType, document.FileName);
     }
@@ -84,12 +92,15 @@ public sealed class RecommendationsController(
         CancellationToken cancellationToken)
     {
         var domainRequest = new RecommendationRequest(
-            request.VenueName ?? string.Empty,
+            request.EventCenterName ?? string.Empty,
             request.Hotels?
                 .Select(hotel => new RequestedHotel(hotel?.Name, hotel?.Price?.Amount, hotel?.Price?.Currency))
                 .ToArray() ?? [],
             new PersonnelInfo(request.PersonnelRegistrationNumber, request.PersonnelFirstName, request.PersonnelLastName),
-            new GeocodingContext(request.EventCity, request.EventCountry));
+            new GeocodingContext(request.EventCity, request.EventCountry),
+            request.PreferCityCenter,
+            request.TaskStartDate,
+            request.TaskEndDate);
 
         return await orchestrator.RecommendAsync(domainRequest, cancellationToken).ConfigureAwait(false);
     }
@@ -156,8 +167,22 @@ public sealed class RecommendationsController(
                 rationale.DistanceMeters,
                 rationale.DistanceKind.ToString(),
                 rationale.EvaluatedHotelCount),
-            recommendation.RankedHotels.Select(ToDto).ToArray(),
-            result.UnresolvedHotels);
+            [ToDto(recommendation.Selected)],
+            result.UnresolvedHotels,
+            result.NearestAirport is { } airport
+                ? new NearestAirportDto(
+                    airport.Name,
+                    airport.Location.Latitude,
+                    airport.Location.Longitude,
+                    airport.StraightLineDistanceMeters,
+                    airport.Route.DistanceMeters,
+                    airport.Route.DurationSeconds,
+                    airport.Route.Kind.ToString(),
+                    airport.AirportHotelRoundTripFare is { } airportFare
+                        ? new PriceDto(airportFare.RoundTripCost.Amount, airportFare.RoundTripCost.Currency)
+                        : null,
+                    airport.AirportHotelRoundTripFare?.UsedDefaultFare ?? false)
+                : null);
     }
 
     private static RankedHotelDto ToDto(HotelCandidate candidate) => new(
@@ -167,5 +192,31 @@ public sealed class RecommendationsController(
         candidate.Location.Longitude,
         candidate.Metrics.DistanceMeters,
         candidate.Metrics.DurationSeconds,
-        candidate.Metrics.Kind.ToString());
+        candidate.Metrics.Kind.ToString(),
+        candidate.TaxiFareEstimate is { } fare
+            ? new PriceDto(fare.RoundTripCost.Amount, fare.RoundTripCost.Currency)
+            : null,
+        candidate.TotalNightlyCost is { } total
+            ? new PriceDto(total.Amount, total.Currency)
+            : null,
+        candidate.TaxiFareEstimate?.UsedDefaultFare ?? false,
+        candidate.TaxiFareEstimate?.DistanceMeters,
+        candidate.TaxiFareEstimate?.DistanceKind.ToString(),
+        candidate.TaxiFareEstimate?.OpeningFare,
+        candidate.TaxiFareEstimate?.FarePerKm,
+        candidate.TripCostEstimate is { } trip
+            ? new TripCostDto(
+                trip.StayNights,
+                trip.CommuteDays,
+                new PriceDto(trip.LodgingSubtotal.Amount, trip.LodgingSubtotal.Currency),
+                trip.LocalTransportSubtotal is { } local
+                    ? new PriceDto(local.Amount, local.Currency)
+                    : null,
+                trip.AirportRoundTripCost is { } airport
+                    ? new PriceDto(airport.Amount, airport.Currency)
+                    : null,
+                trip.TotalCost is { } totalTrip
+                    ? new PriceDto(totalTrip.Amount, totalTrip.Currency)
+                    : null)
+            : null);
 }

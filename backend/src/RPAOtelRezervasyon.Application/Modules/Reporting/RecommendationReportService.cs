@@ -2,6 +2,7 @@ using System.Globalization;
 using RPAOtelRezervasyon.Application.Orchestration;
 using RPAOtelRezervasyon.Domain.Abstractions;
 using RPAOtelRezervasyon.Domain.Models;
+using RPAOtelRezervasyon.Domain.Validation;
 
 namespace RPAOtelRezervasyon.Application.Modules.Reporting;
 
@@ -17,18 +18,23 @@ public sealed class RecommendationReportService(
     ReportingOptions options)
 {
     public async Task<ReportDocument> CreateAsync(
-        string venueName,
+        string eventCenterName,
         RecommendationResult result,
         CancellationToken cancellationToken) =>
-        await CreateAsync(venueName, result, null, cancellationToken).ConfigureAwait(false);
+        await CreateAsync(eventCenterName, result, null, cancellationToken).ConfigureAwait(false);
 
     public async Task<ReportDocument> CreateAsync(
-        string venueName,
+        string eventCenterName,
         RecommendationResult result,
         PersonnelInfo? personnel,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? cityName = null,
+        DateOnly? taskStartDate = null,
+        DateOnly? taskEndDate = null,
+        string? countryName = null,
+        IReadOnlyList<RequestedHotel>? requestedHotels = null)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(venueName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(eventCenterName);
         ArgumentNullException.ThrowIfNull(result);
 
         var recommendation = result.Recommendation
@@ -36,24 +42,45 @@ public sealed class RecommendationReportService(
         var venueLocation = result.VenueLocation
             ?? throw new InvalidOperationException("Başarılı sonuçta etkinlik alanı konumu bulunmalıdır.");
 
-        var walkingRoutes = await GetWalkingRoutesAsync(recommendation.RankedHotels, venueLocation, cancellationToken).ConfigureAwait(false);
+        var selectedCandidate = recommendation.Selected;
+        var mapCandidates = recommendation.RankedHotels
+            .OrderBy(candidate => candidate.TripCostEstimate?.TotalCost?.Amount ?? decimal.MaxValue)
+            .ThenBy(candidate => candidate.Metrics.Kind)
+            .ThenBy(candidate => candidate.Metrics.Kind == DistanceKind.Road ? candidate.Metrics.DurationSeconds : 0)
+            .ThenBy(candidate => candidate.Metrics.DistanceMeters)
+            .ThenBy(candidate => candidate.Hotel.Name, StringComparer.Ordinal)
+            .ToArray();
+        var mapWalkingRoutes = await GetWalkingRoutesAsync(mapCandidates, venueLocation, cancellationToken).ConfigureAwait(false);
+        var selectedWalkingRoute = mapCandidates
+            .Select((candidate, index) => (candidate, route: mapWalkingRoutes[index]))
+            .Single(item => string.Equals(item.candidate.Hotel.Name, selectedCandidate.Hotel.Name, StringComparison.Ordinal)).route;
         var selectedName = recommendation.Selected.Hotel.Name;
         var rows = recommendation.RankedHotels
-            .Select((candidate, index) => ToRow(candidate, selectedName, walkingRoutes[index].Metrics, walkingRoutes[index].Requested))
+            .Select(candidate => string.Equals(candidate.Hotel.Name, selectedName, StringComparison.Ordinal)
+                ? ToRow(candidate, selectedName, selectedWalkingRoute.Metrics, selectedWalkingRoute.Requested)
+                : ToRow(candidate, selectedName, null, false))
             .ToArray();
-        var selectedRow = rows.First(row => row.IsSelected);
-
-        var map = await TryRenderMapAsync(venueLocation, recommendation.RankedHotels, selectedName, walkingRoutes, cancellationToken).ConfigureAwait(false);
+        var explanationRows = rows;
+        var map = await TryRenderMapAsync(venueLocation, mapCandidates, selectedName, mapWalkingRoutes, cancellationToken).ConfigureAwait(false);
+        var selectedRow = rows.Single(row => row.IsSelected);
         var explanations = await explanationService.ExplainAsync(
-            venueName.Trim(),
-            rows,
+            eventCenterName.Trim(),
+            explanationRows,
             result.UnresolvedHotels,
             cancellationToken).ConfigureAwait(false);
         var transportExplanation = explanations.Single(option => option.Strategy == RecommendationStrategy.TransportPriority).Explanation;
+        if (selectedRow.TripCostEstimate?.TotalCost is null)
+        {
+            transportExplanation = "Görev toplam maliyeti, ulaşım kalemlerinden biri hesaplanamadığı için oluşturulamadı.";
+        }
+        var optionsForReport = new[]
+        {
+            new RecommendationReportOption(RecommendationStrategy.TransportPriority, selectedRow, transportExplanation),
+        };
 
         var report = new RecommendationReport(
             options.DocumentTitle,
-            venueName.Trim(),
+            eventCenterName.Trim(),
             selectedRow,
             rows,
             result.UnresolvedHotels,
@@ -61,7 +88,14 @@ public sealed class RecommendationReportService(
             DateTimeOffset.UtcNow,
             personnel,
             transportExplanation,
-            explanations);
+            optionsForReport,
+            result.PreferCityCenter,
+            result.NearestAirport,
+            cityName,
+            taskStartDate,
+            taskEndDate,
+            countryName,
+            BuildUnresolvedHotelDetails(result.UnresolvedHotels, requestedHotels));
 
         var document = await renderer.RenderAsync(report, cancellationToken).ConfigureAwait(false);
 
@@ -143,5 +177,32 @@ public sealed class RecommendationReportService(
             string.Equals(candidate.Hotel.Name, selectedName, StringComparison.Ordinal),
             candidate.Location,
             walkingMetrics,
-            walkingRouteRequested);
+            walkingRouteRequested,
+            candidate.TaxiFareEstimate,
+            candidate.TotalNightlyCost,
+            candidate.TripCostEstimate);
+
+    private static IReadOnlyList<UnresolvedHotelReportRow> BuildUnresolvedHotelDetails(
+        IReadOnlyList<string> unresolvedNames,
+        IReadOnlyList<RequestedHotel>? requestedHotels)
+    {
+        if (requestedHotels is null || unresolvedNames.Count == 0)
+        {
+            return [];
+        }
+
+        var unresolved = new HashSet<string>(unresolvedNames, StringComparer.OrdinalIgnoreCase);
+        return requestedHotels
+            .Where(hotel => !string.IsNullOrWhiteSpace(hotel.Name) && unresolved.Contains(hotel.Name.Trim()))
+            .GroupBy(hotel => hotel.Name!.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Select(group =>
+            {
+                var hotel = group.First();
+                var price = hotel.Amount is >= 0 && NightlyPrice.IsValidCurrencyCode(hotel.Currency)
+                    ? new NightlyPrice(hotel.Amount.Value, hotel.Currency!)
+                    : null;
+                return new UnresolvedHotelReportRow(hotel.Name!.Trim(), price);
+            })
+            .ToArray();
+    }
 }

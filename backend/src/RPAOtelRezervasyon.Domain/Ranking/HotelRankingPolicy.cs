@@ -14,8 +14,14 @@ public static class HotelRankingPolicy
     {
         ArgumentNullException.ThrowIfNull(candidates);
 
-        return candidates
-            .OrderBy(candidate => candidate.Metrics.Kind)
+        var candidateList = candidates.ToArray();
+        var hasCompleteTripCosts = candidateList.Any(candidate => candidate.TripCostEstimate?.TotalCost is not null);
+
+        return candidateList
+            .OrderBy(candidate => hasCompleteTripCosts
+                ? candidate.TripCostEstimate?.TotalCost?.Amount ?? decimal.MaxValue
+                : candidate.TotalNightlyCost?.Amount ?? decimal.MaxValue)
+            .ThenBy(candidate => candidate.Metrics.Kind)
             .ThenBy(candidate => candidate.Metrics.DurationSeconds)
             .ThenBy(candidate => candidate.Metrics.DistanceMeters)
             .ThenBy(candidate => candidate.Hotel.Name, StringComparer.Ordinal)

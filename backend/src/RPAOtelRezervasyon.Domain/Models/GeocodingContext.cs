@@ -5,3 +5,4 @@ public sealed record GeocodingContext(string? City, string? Country)
 {
     public static GeocodingContext Empty { get; } = new(null, null);
 }
+

@@ -37,8 +37,20 @@ public static class OpenAiCompatibleServiceCollectionExtensions
 
                 client.Timeout = Timeout.InfiniteTimeSpan;
             });
+        services.AddHttpClient<OpenAiCompatibleTaxiFareProvider>((provider, client) =>
+        {
+            var options = provider.GetRequiredService<IOptions<OpenAiCompatibleOptions>>().Value;
+            if (Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out var baseUri))
+            {
+                client.BaseAddress = baseUri;
+            }
+
+            client.Timeout = Timeout.InfiniteTimeSpan;
+        });
         services.AddTransient<IRecommendationExplanationProvider>(provider =>
             provider.GetRequiredService<OpenAiCompatibleRecommendationExplanationProvider>());
+        services.AddTransient<ITaxiFareProvider>(provider =>
+            provider.GetRequiredService<OpenAiCompatibleTaxiFareProvider>());
         services.AddLogging(logging =>
             logging.AddFilter("System.Net.Http.HttpClient.OpenAiCompatibleRecommendationExplanationProvider", LogLevel.None));
 

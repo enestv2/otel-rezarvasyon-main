@@ -9,18 +9,21 @@ namespace RPAOtelRezervasyon.Application.Modules.Delivery;
 public sealed class RecommendationDeliveryService
 {
     public RecommendationResult Deliver(
-        string venueName,
+        string eventCenterName,
         GeoPoint venueLocation,
         Recommendation recommendation,
-        IReadOnlyList<string> unresolvedHotels)
+        IReadOnlyList<string> unresolvedHotels,
+        bool preferCityCenter = false,
+        NearestAirportInfo? nearestAirport = null)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(venueName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(eventCenterName);
         ArgumentNullException.ThrowIfNull(venueLocation);
         ArgumentNullException.ThrowIfNull(recommendation);
         ArgumentNullException.ThrowIfNull(unresolvedHotels);
 
         var rationale = Rationale.For(recommendation.Selected, recommendation.RankedHotels.Count);
 
-        return RecommendationResult.Succeeded(venueName, venueLocation, recommendation, rationale, unresolvedHotels);
+        return RecommendationResult.Succeeded(eventCenterName, venueLocation, recommendation, rationale, unresolvedHotels,
+            preferCityCenter, nearestAirport);
     }
 }

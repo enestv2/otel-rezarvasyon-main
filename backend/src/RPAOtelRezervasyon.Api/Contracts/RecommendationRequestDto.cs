@@ -13,11 +13,20 @@ public sealed class RecommendationRequestDto
 
     public string? PersonnelLastName { get; init; }
 
-    public string? VenueName { get; init; }
+    public string? EventCenterName { get; init; }
 
     public string? EventCity { get; init; }
 
     public string? EventCountry { get; init; }
+
+    /// <summary>Görevin ilk günü; konaklama geceleri başlangıç ve bitiş tarihleri arasındaki gün farkıdır.</summary>
+    public DateOnly? TaskStartDate { get; init; }
+
+    /// <summary>Görevin son günü. Dört günlük görev aralığı üç konaklama gecesi üretir.</summary>
+    public DateOnly? TaskEndDate { get; init; }
+
+    /// <summary>true ise şehir merkezine, false veya belirtilmemişse etkinlik alanına yakın otel seçilir.</summary>
+    public bool PreferCityCenter { get; init; }
 
     public IReadOnlyList<HotelRequestDto?>? Hotels { get; init; }
 }

@@ -11,12 +11,12 @@ public sealed class RecommendationExplanationService(
     private const decimal BalancePremiumLimit = 0.10m;
 
     public async Task<IReadOnlyList<RecommendationReportOption>> ExplainAsync(
-        string venueName,
+        string eventCenterName,
         IReadOnlyList<HotelReportRow> rankedHotels,
         IReadOnlyList<string> unresolvedHotels,
         CancellationToken cancellationToken)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(venueName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(eventCenterName);
         ArgumentNullException.ThrowIfNull(rankedHotels);
         ArgumentNullException.ThrowIfNull(unresolvedHotels);
         if (rankedHotels.Count == 0)
@@ -46,12 +46,13 @@ public sealed class RecommendationExplanationService(
         };
 
         IReadOnlyDictionary<RecommendationStrategy, IReadOnlyList<string>> reasonCodes = new Dictionary<RecommendationStrategy, IReadOnlyList<string>>();
+        string? llmSummary = null;
         if (options.Enabled)
         {
             try
             {
                 var request = new RecommendationExplanationRequest(
-                    venueName,
+                    eventCenterName,
                     rankedHotels.Select((hotel, index) => new RecommendationExplanationHotel(
                         index + 1,
                         hotel.Name,
@@ -64,7 +65,20 @@ public sealed class RecommendationExplanationService(
                         hotel.Location.Longitude,
                         hotel.WalkingRouteRequested,
                         hotel.WalkingMetrics?.DistanceMeters,
-                        hotel.WalkingMetrics?.DurationSeconds)).ToArray(),
+                        hotel.WalkingMetrics?.DurationSeconds,
+                        hotel.TripCostEstimate?.StayNights,
+                        hotel.TripCostEstimate?.CommuteDays,
+                        hotel.TripCostEstimate?.LodgingSubtotal.Amount,
+                        hotel.TripCostEstimate?.LocalTransportSubtotal?.Amount,
+                        hotel.TripCostEstimate?.AirportRoundTripCost?.Amount,
+                        hotel.TripCostEstimate?.TotalCost?.Amount,
+                        hotel.TripCostEstimate?.TotalCost is { } totalCost
+                            ? RecommendationMetricFormatter.Price(totalCost)
+                            : null,
+                        hotel.TaxiFareEstimate?.DistanceMeters,
+                        hotel.TaxiFareEstimate is { } route
+                            ? RecommendationMetricFormatter.Distance(route.DistanceMeters)
+                            : null)).ToArray(),
                     unresolvedHotels.ToArray(),
                     optionSeeds.Where(seed => seed.Hotel is not null)
                         .Select(seed => new RecommendationExplanationPolicyOption(seed.Strategy, seed.Hotel!.Name, seed.AllowedReasonCodes))
@@ -74,6 +88,7 @@ public sealed class RecommendationExplanationService(
                 if (IsValid(outcome, request))
                 {
                     reasonCodes = outcome.Options.ToDictionary(option => option.Strategy, option => option.ReasonCodes);
+                    llmSummary = outcome.Summary;
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -89,11 +104,59 @@ public sealed class RecommendationExplanationService(
         return optionSeeds.Select(seed => new RecommendationReportOption(
             seed.Strategy,
             seed.Hotel,
-            seed.Hotel is { } hotel
-                ? BuildExplanation(seed.Strategy, hotel, cheapest, transport, rankedHotels, seed.AllowedReasonCodes,
-                    reasonCodes.GetValueOrDefault(seed.Strategy) ?? seed.AllowedReasonCodes)
-                : seed.Explanation))
+            BuildOptionExplanation(seed, cheapest, transport, rankedHotels, reasonCodes, llmSummary)))
             .ToArray();
+    }
+
+    private static string BuildOptionExplanation(
+        OptionSeed seed,
+        HotelReportRow? cheapest,
+        HotelReportRow transport,
+        IReadOnlyList<HotelReportRow> rankedHotels,
+        IReadOnlyDictionary<RecommendationStrategy, IReadOnlyList<string>> reasonCodes,
+        string? llmSummary)
+    {
+        if (seed.Hotel is not { } hotel)
+        {
+            return seed.Explanation;
+        }
+
+        var usesLlmSummary = seed.Strategy == RecommendationStrategy.TransportPriority
+            && IsUsableTripSummary(llmSummary, hotel);
+        var explanation = usesLlmSummary
+            ? llmSummary!.Trim()
+            : BuildExplanation(seed.Strategy, hotel, cheapest, transport, rankedHotels, seed.AllowedReasonCodes,
+                reasonCodes.GetValueOrDefault(seed.Strategy) ?? seed.AllowedReasonCodes);
+
+        if (usesLlmSummary && hotel.TripCostEstimate?.TotalCost is not null)
+        {
+            var priceComparison = new List<string>();
+            AddPriceTravelTradeoff(priceComparison, seed.Strategy, hotel, transport, cheapest);
+            if (priceComparison.Count > 0)
+            {
+                explanation = $"{explanation} {string.Join(' ', priceComparison)}";
+            }
+        }
+
+        return explanation;
+    }
+
+    private static bool IsUsableTripSummary(string? summary, HotelReportRow hotel)
+    {
+        if (hotel.TripCostEstimate?.TotalCost is null || string.IsNullOrWhiteSpace(summary))
+        {
+            return false;
+        }
+
+        var trimmed = summary.Trim();
+        var eventDistance = hotel.TaxiFareEstimate?.DistanceMeters;
+        return eventDistance is not null
+            && trimmed.Length <= 110
+            && !trimmed.Contains('\n')
+            && trimmed.Count(character => character is '.' or '!' or '?') <= 1
+            && trimmed.Contains("en düşük", StringComparison.OrdinalIgnoreCase)
+            && trimmed.Contains(RecommendationMetricFormatter.Distance(eventDistance.Value), StringComparison.Ordinal)
+            && trimmed.Contains("mesafede", StringComparison.OrdinalIgnoreCase);
     }
 
     private static OptionSeed Seed(
@@ -114,7 +177,9 @@ public sealed class RecommendationExplanationService(
             strategy switch
             {
                 RecommendationStrategy.BudgetPriority => "lowest-price",
-                RecommendationStrategy.TransportPriority => selected.DistanceKind == DistanceKind.Road ? "shortest-road-time" : "shortest-straightline-estimate",
+                RecommendationStrategy.TransportPriority => selected.TripCostEstimate?.TotalCost is not null
+                    ? "lowest-total-trip-cost"
+                    : selected.DistanceKind == DistanceKind.Road ? "shortest-road-time" : "shortest-straightline-estimate",
                 RecommendationStrategy.Balanced => "within-ten-percent-budget-band",
                 _ => throw new ArgumentOutOfRangeException(nameof(strategy)),
             },
@@ -198,7 +263,14 @@ public sealed class RecommendationExplanationService(
                 AddPriceTravelTradeoff(sentences, strategy, selected, transport, cheapest);
                 break;
             case RecommendationStrategy.TransportPriority:
-                if (selected.DistanceKind == DistanceKind.Road)
+                if (selected.TripCostEstimate?.TotalCost is not null)
+                {
+                    var eventDistance = selected.TaxiFareEstimate?.DistanceMeters;
+                    sentences.Add(eventDistance is { } meters
+                        ? $"En düşük hesaplanan toplam maliyetli seçenek; etkinlik alanına {RecommendationMetricFormatter.Distance(meters)} mesafede."
+                        : "En düşük hesaplanan toplam maliyetli seçenek.");
+                }
+                else if (selected.DistanceKind == DistanceKind.Road)
                 {
                     sentences.Add($"{selected.Name}, ölçülen yol rotaları içinde en kısa tahmini yolculuk süresine sahip ({RecommendationMetricFormatter.RoadDuration(selected)}; {RecommendationMetricFormatter.Distance(selected.DistanceMeters)}).");
                 }
@@ -344,12 +416,18 @@ public sealed class RecommendationExplanationService(
         return $"İki yol süresi de PDF tablosunda {cheaperMinutes} dk olarak gösterilir; dakika yuvarlamasında süre farkı görünmez.";
     }
 
-    private static HotelReportRow BestTransport(IEnumerable<HotelReportRow> rows) => rows
-        .OrderBy(row => row.DistanceKind)
-        .ThenBy(row => row.DistanceKind == DistanceKind.Road ? row.DurationSeconds : 0)
-        .ThenBy(row => row.DistanceMeters)
-        .ThenBy(row => row.Name, StringComparer.Ordinal)
-        .First();
+    private static HotelReportRow BestTransport(IEnumerable<HotelReportRow> rows)
+    {
+        var candidates = rows.ToArray();
+        var complete = candidates.Where(row => row.TripCostEstimate?.TotalCost is not null).ToArray();
+        return complete.Length > 0
+            ? complete.OrderBy(row => row.TripCostEstimate!.TotalCost!.Amount)
+                .ThenBy(row => row.Name, StringComparer.Ordinal).First()
+            : candidates.OrderBy(row => row.DistanceKind)
+                .ThenBy(row => row.DistanceKind == DistanceKind.Road ? row.DurationSeconds : 0)
+                .ThenBy(row => row.DistanceMeters)
+                .ThenBy(row => row.Name, StringComparer.Ordinal).First();
+    }
 
     private static string FormatPercent(decimal fraction) =>
         string.Create(CultureInfo.InvariantCulture, $"{fraction * 100m:0.#}");

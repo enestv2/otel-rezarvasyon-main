@@ -6,19 +6,21 @@ using RPAOtelRezervasyon.Api.OpenApi;
 using RPAOtelRezervasyon.Api.Auth;
 using RPAOtelRezervasyon.Api.Errors;
 using RPAOtelRezervasyon.Application.Modules.Delivery;
+using RPAOtelRezervasyon.Application.Modules.Airports;
 using RPAOtelRezervasyon.Application.Modules.DistanceRouting;
 using RPAOtelRezervasyon.Application.Modules.HotelGeocoding;
 using RPAOtelRezervasyon.Application.Modules.Ranking;
 using RPAOtelRezervasyon.Application.Modules.Reporting;
+using RPAOtelRezervasyon.Application.Modules.TaxiFares;
 using RPAOtelRezervasyon.Application.Modules.VenueGeocoding;
 using RPAOtelRezervasyon.Application.Orchestration;
 using RPAOtelRezervasyon.Domain.Abstractions;
+using RPAOtelRezervasyon.Domain.Models;
 using RPAOtelRezervasyon.Infrastructure.Persistence.Mongo;
 using RPAOtelRezervasyon.Infrastructure.Providers.HealthChecks;
-using RPAOtelRezervasyon.Infrastructure.Providers.Geoapify;
+using RPAOtelRezervasyon.Infrastructure.Providers;
 using RPAOtelRezervasyon.Infrastructure.Providers.Llm;
 using RPAOtelRezervasyon.Infrastructure.Providers.Reporting;
-using RPAOtelRezervasyon.Infrastructure.Providers.StaticMap;
 
 var builder = WebApplication.CreateBuilder(args);
 var configuration = builder.Configuration;
@@ -42,8 +44,8 @@ services.AddAuthorizationBuilder()
 
 // Altyapı: konum önbelleği (MongoDB) + dış sağlayıcılar + sağlık kontrolleri.
 //services.AddMongoGeocodeCache(configuration);
-services.AddGeoapifyProviders(configuration);
-services.AddProviderHealthChecks();
+var selectedLocationProvider = services.AddConfiguredLocationProvider(configuration);
+services.AddProviderHealthChecks(selectedLocationProvider);
 
 // BR-4: geocoding'den önce kalıcı önbellek; isabet varsa dış sağlayıcı çağrılmaz.
 // Uygulama servisleri (durumsuz).
@@ -52,6 +54,23 @@ services.AddTransient<HotelGeocodingService>();
 services.AddTransient<DistanceRoutingService>();
 services.AddTransient<RankingService>();
 services.AddTransient<RecommendationDeliveryService>();
+services.AddTransient<AirportSearchService>();
+services.AddOptions<TaxiFareOptions>()
+    .Bind(configuration.GetSection(TaxiFareOptions.SectionName))
+    .ValidateDataAnnotations()
+    .Validate(options => options.DefaultOpeningFare is > 0m and <= 100000m,
+        "TaxiFare:DefaultOpeningFare 0 ile 100000 arasında olmalıdır.")
+    .Validate(options => options.DefaultFarePerKm is > 0m and <= 100000m,
+        "TaxiFare:DefaultFarePerKm 0 ile 100000 arasında olmalıdır.")
+    .Validate(options => options.DefaultRates.All(rate =>
+            NightlyPrice.IsValidCurrencyCode(rate.Key)
+            && rate.Value.OpeningFare is > 0m and <= 100000m
+            && rate.Value.FarePerKm is > 0m and <= 100000m),
+        "TaxiFare:DefaultRates içindeki para birimleri ve ücretler geçerli olmalıdır.")
+    .ValidateOnStart();
+services.AddTransient(serviceProvider => new TaxiFareService(
+    serviceProvider.GetRequiredService<ITaxiFareProvider>(),
+    serviceProvider.GetRequiredService<IOptions<TaxiFareOptions>>().Value));
 services.AddTransient<HotelRecommendationOrchestrator>();
 
 // Belge üretimi (0006): rapor modeli + PDF renderer (QuestPDF) + şematik coğrafi görsel (SkiaSharp).
@@ -60,7 +79,6 @@ services.AddOptions<ReportingOptions>()
     .ValidateDataAnnotations()
     .ValidateOnStart();
 services.AddQuestPdfReporting();
-services.AddStaticMapWithFallback(configuration);
 services.AddOpenAiCompatibleRecommendationExplanation(configuration);
 services.AddTransient(serviceProvider =>
 {

@@ -5,7 +5,9 @@ namespace RPAOtelRezervasyon.Infrastructure.Providers.StaticMap;
 
 internal sealed record StaticMapProjection(double CenterLongitude, double CenterLatitude, double Zoom)
 {
-    private const double TileSize = 256;
+    // Geoapify Static Maps use MapLibre's 512px vector-tile world scale.
+    // Using 256 here halves projected offsets, visibly shifting markers from their map locations.
+    private const double TileSize = 512;
     private const double MaxLatitude = 85.05112878;
 
     public static StaticMapProjection Fit(StaticMapRequest request, int maxZoom, int paddingPx = 32,

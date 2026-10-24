@@ -28,7 +28,9 @@ public sealed class HostedStaticMapProvider(HttpClient httpClient, IOptions<Stat
         try
         {
             var overviewRequest = StaticMapComposition.CreateOverviewRequest(request);
-            using var overviewResult = await FetchBaseMapAsync(overviewRequest, cancellationToken);
+            var projection = StaticMapProjection.Fit(overviewRequest, _options.MaxZoom, paddingPx: 112,
+                includeRouteGeometry: false);
+            using var overviewResult = await FetchBaseMapAsync(overviewRequest, projection, cancellationToken);
             if (overviewResult.Bitmap is null)
             {
                 return Failure(overviewResult.Failure ?? OutcomeStatus.ProviderError);
@@ -36,6 +38,7 @@ public sealed class HostedStaticMapProvider(HttpClient httpClient, IOptions<Stat
 
             using var overview = RenderView(overviewResult.Bitmap,
                 overviewRequest,
+                projection,
                 StaticMapComposition.OverviewMarkerRanks(request), selectedRouteOnly: false, drawRoutes: false);
             if (overview is null)
             {
@@ -64,11 +67,12 @@ public sealed class HostedStaticMapProvider(HttpClient httpClient, IOptions<Stat
     }
 
     private async Task<MapBitmapResult> FetchBaseMapAsync(StaticMapRequest request,
+        StaticMapProjection projection,
         CancellationToken cancellationToken)
     {
         try
         {
-            using var message = BuildRequest(request);
+            using var message = BuildRequest(request, projection);
             using var response = await httpClient.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
@@ -118,6 +122,7 @@ public sealed class HostedStaticMapProvider(HttpClient httpClient, IOptions<Stat
     }
 
     private static SKBitmap? RenderView(SKBitmap baseMap, StaticMapRequest request,
+        StaticMapProjection projection,
         IReadOnlyList<int> markerRanks, bool selectedRouteOnly = false, bool drawRoutes = true)
     {
         using var surface = SKSurface.Create(new SKImageInfo(baseMap.Width, baseMap.Height, SKColorType.Rgba8888, SKAlphaType.Premul));
@@ -129,8 +134,8 @@ public sealed class HostedStaticMapProvider(HttpClient httpClient, IOptions<Stat
         surface.Canvas.DrawBitmap(baseMap, 0, 0, SKSamplingOptions.Default);
         surface.Canvas.Save();
         surface.Canvas.Scale(ScaleFactor);
-        StaticMapOverlay.Draw(surface.Canvas, request, static _ => SKPoint.Empty, markerRanks,
-            selectedRouteOnly, drawRoutes, drawVenue: false, drawHotels: false);
+        StaticMapOverlay.Draw(surface.Canvas, request, point => projection.ToPixel(point, request), markerRanks,
+            selectedRouteOnly, drawRoutes, selectedMarkerScale: SelectedMarkerScale(projection.Zoom));
         surface.Canvas.Restore();
         using var image = surface.Snapshot();
         return SKBitmap.FromImage(image);
@@ -138,6 +143,8 @@ public sealed class HostedStaticMapProvider(HttpClient httpClient, IOptions<Stat
 
     private static StaticMapOutcome Failure(OutcomeStatus status) =>
         status == OutcomeStatus.TransientError ? StaticMapOutcome.TransientError(Id) : StaticMapOutcome.ProviderError(Id);
+
+    private static float SelectedMarkerScale(double zoom) => (float)Math.Clamp(0.9 + ((zoom - 10) * 0.06), 1, 1.5);
 
     private sealed record MapBitmapResult(SKBitmap? Bitmap, OutcomeStatus? Failure) : IDisposable
     {
@@ -163,7 +170,7 @@ public sealed class HostedStaticMapProvider(HttpClient httpClient, IOptions<Stat
         return output.ToArray();
     }
 
-    private HttpRequestMessage BuildRequest(StaticMapRequest request)
+    private HttpRequestMessage BuildRequest(StaticMapRequest request, StaticMapProjection projection)
     {
         var uri = new Uri($"{_options.BaseUrl}?apiKey={Uri.EscapeDataString(_options.ApiKey)}", UriKind.Absolute);
         var body = new Dictionary<string, object>
@@ -174,48 +181,9 @@ public sealed class HostedStaticMapProvider(HttpClient httpClient, IOptions<Stat
             ["format"] = "png",
             ["scaleFactor"] = ScaleFactor,
             ["attribution"] = "mandatory",
-            ["markers"] = CreateMarkers(request),
+            ["center"] = new { lat = projection.CenterLatitude, lon = projection.CenterLongitude },
+            ["zoom"] = projection.Zoom,
         };
         return new HttpRequestMessage(HttpMethod.Post, uri) { Content = JsonContent.Create(body) };
-    }
-
-    private static IReadOnlyList<Dictionary<string, object>> CreateMarkers(StaticMapRequest request)
-    {
-        var markers = new List<Dictionary<string, object>>(request.Markers.Count + 1)
-        {
-            new()
-            {
-                ["lat"] = request.Venue.Latitude,
-                ["lon"] = request.Venue.Longitude,
-                ["type"] = "awesome",
-                ["icon"] = "map-marker-alt",
-                ["icontype"] = "awesome",
-                ["color"] = "#dc2626",
-                ["contentcolor"] = "#ffffff",
-                ["size"] = 32,
-                ["iconsize"] = "medium",
-                ["whitecircle"] = "no",
-            },
-        };
-
-        for (var index = 0; index < request.Markers.Count; index++)
-        {
-            var hotel = request.Markers[index];
-            var rank = index;
-            var color = StaticMapOverlay.RouteColor(hotel.IsSelected, rank);
-            markers.Add(new Dictionary<string, object>
-            {
-                ["lat"] = hotel.Location.Latitude,
-                ["lon"] = hotel.Location.Longitude,
-                ["type"] = "circle",
-                ["color"] = $"#{color.Red:X2}{color.Green:X2}{color.Blue:X2}",
-                ["size"] = hotel.IsSelected ? 24 : 22,
-                ["contentsize"] = 14,
-                ["whitecircle"] = "no",
-                ["text"] = (index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture),
-            });
-        }
-
-        return markers;
     }
 }

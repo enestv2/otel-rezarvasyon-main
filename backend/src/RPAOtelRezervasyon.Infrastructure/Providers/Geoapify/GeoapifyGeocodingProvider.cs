@@ -22,6 +22,7 @@ public sealed class GeoapifyGeocodingProvider(
         "arena", "center", "centre", "conference", "congress", "convention", "expo", "fair", "hall",
         "hospital", "hotel", "merkez", "merkezi", "salon", "salonu", "stadium", "university", "venue",
         "fuar", "hastane", "hastanesi", "kongre", "oteli", "otel", "universitesi",
+        "city", "downtown", "sehir",
     };
 
     public string ProviderId => Id;
@@ -39,9 +40,9 @@ public sealed class GeoapifyGeocodingProvider(
 
         var query = new List<string>
         {
-            $"name={Uri.EscapeDataString(placeName.Trim())}",
+            $"{(string.IsNullOrWhiteSpace(context.City) ? "text" : "name")}={Uri.EscapeDataString(placeName.Trim())}",
             "format=json",
-            "limit=5",
+            $"limit={(string.IsNullOrWhiteSpace(context.City) ? 20 : 5)}",
             $"apiKey={Uri.EscapeDataString(options.Value.ApiKey)}",
         };
         if (!string.IsNullOrWhiteSpace(context.City))
@@ -127,8 +128,7 @@ public sealed class GeoapifyGeocodingProvider(
         }
 
         var normalizedRequested = NormalizeName(requestedName);
-        var normalizedCandidate = NormalizeName(candidateName);
-        if (string.Equals(normalizedRequested, normalizedCandidate, StringComparison.Ordinal))
+        if (string.Equals(normalizedRequested, NormalizeName(candidateName), StringComparison.Ordinal))
         {
             return true;
         }
@@ -137,20 +137,14 @@ public sealed class GeoapifyGeocodingProvider(
             .Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .ToHashSet(StringComparer.Ordinal);
         var requestedTokens = normalizedRequested.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var candidateTokens = normalizedCandidate.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         var requestedIdentityTokens = requestedTokens
             .Where(token => !contextTokens.Contains(token) && !GenericVenueTokens.Contains(token))
             .ToHashSet(StringComparer.Ordinal);
-        var candidateIdentityTokens = candidateTokens
-            .Where(token => !contextTokens.Contains(token) && !GenericVenueTokens.Contains(token))
-            .ToArray();
+        var candidateTokens = NormalizeName($"{candidateName} {result.Formatted}")
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
-        return requestedIdentityTokens.Count > 0
-            && candidateIdentityTokens.Length > 0
-            && requestedIdentityTokens.All(candidateIdentityTokens.Contains)
-            && candidateTokens.All(token => requestedTokens.Contains(token, StringComparer.Ordinal)
-                || contextTokens.Contains(token)
-                || GenericVenueTokens.Contains(token));
+        return requestedIdentityTokens.Count >= 2
+            && requestedIdentityTokens.All(candidateTokens.Contains);
     }
 
     private static string NormalizeName(string value)

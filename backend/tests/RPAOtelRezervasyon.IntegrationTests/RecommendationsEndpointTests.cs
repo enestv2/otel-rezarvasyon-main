@@ -137,7 +137,7 @@ public sealed class RecommendationsEndpointTests
         var logs = string.Join(" ", factory.LogCapture.Messages);
         Assert.DoesNotContain("S12345", logs, StringComparison.Ordinal);
         Assert.DoesNotContain("Ada", logs, StringComparison.Ordinal);
-        Assert.DoesNotContain("YÄ±lmaz", logs, StringComparison.Ordinal);
+        Assert.DoesNotContain("Yılmaz", logs, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -148,7 +148,7 @@ public sealed class RecommendationsEndpointTests
 
         var response = await client.PostAsJsonAsync("/api/recommendations", new
         {
-            venueName = Venue,
+            eventCenterName = Venue,
             eventCity = "Ankara",
             hotels = new[] { Hotel(NearHotel) },
         });
@@ -189,7 +189,7 @@ public sealed class RecommendationsEndpointTests
             "/api/recommendations",
             new
             {
-                venueName = Venue,
+                eventCenterName = Venue,
                 hotels = new[] { new { name = NearHotel, price = new { amount, currency = "TRY" } } },
             });
 
@@ -205,7 +205,7 @@ public sealed class RecommendationsEndpointTests
 
         var response = await client.PostAsJsonAsync(
             "/api/recommendations",
-            new { venueName = Venue, hotels = new[] { new { name = NearHotel } } });
+            new { eventCenterName = Venue, hotels = new[] { new { name = NearHotel } } });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal(0, factory.Geocoding.CallCount);
@@ -218,7 +218,7 @@ public sealed class RecommendationsEndpointTests
         using var client = CreateAuthorizedClient(factory);
 
         const string body = """
-            { "venueName": "Ankara Kongre Merkezi", "hotels": [ { "name": "Yakin Otel", "price": null } ] }
+            { "eventCenterName": "Ankara Kongre Merkezi", "hotels": [ { "name": "Yakin Otel", "price": null } ] }
             """;
         using var content = new StringContent(body, Encoding.UTF8, "application/json");
 
@@ -238,7 +238,7 @@ public sealed class RecommendationsEndpointTests
         using var client = CreateAuthorizedClient(factory);
 
         const string body = """
-            { "venueName": "Ankara Kongre Merkezi", "hotels": [ { "name": "Yakin Otel", "price": { "amount": "abc", "currency": "TRY" } } ] }
+            { "eventCenterName": "Ankara Kongre Merkezi", "hotels": [ { "name": "Yakin Otel", "price": { "amount": "abc", "currency": "TRY" } } ] }
             """;
         using var content = new StringContent(body, Encoding.UTF8, "application/json");
 
@@ -495,12 +495,12 @@ public sealed class RecommendationsEndpointTests
     private static object Hotel(string name, decimal amount = 1500m, string currency = "TRY") =>
         new { name, price = new { amount, currency } };
 
-    private static object RequestBody(string venueName, params object[] hotels) => new
+    private static object RequestBody(string eventCenterName, params object[] hotels) => new
     {
         personnelRegistrationNumber = "S12345",
         personnelFirstName = "Ada",
         personnelLastName = "Yılmaz",
-        venueName,
+        eventCenterName,
         eventCity = "Ankara",
         eventCountry = "Turkey",
         hotels,

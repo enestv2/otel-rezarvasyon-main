@@ -29,24 +29,24 @@ public sealed record ValidationResult
 public static class RecommendationRequestValidator
 {
     public const int MaxHotels = 20;
-    public const int MinVenueNameLength = 3;
-    public const int MaxVenueNameLength = 200;
+    public const int MinEventCenterNameLength = 3;
+    public const int MaxEventCenterNameLength = 200;
     public const int MinHotelNameLength = 2;
     public const int MaxHotelNameLength = 200;
 
-    public static ValidationResult Validate(string? venueName, IReadOnlyList<RequestedHotel>? hotels) =>
-        ValidateCore(venueName, hotels, null, null, null, requireRequestContext: false);
+    public static ValidationResult Validate(string? eventCenterName, IReadOnlyList<RequestedHotel>? hotels) =>
+        ValidateCore(eventCenterName, hotels, null, null, null, requireRequestContext: false);
 
     public static ValidationResult Validate(
-        string? venueName,
+        string? eventCenterName,
         IReadOnlyList<RequestedHotel>? hotels,
         PersonnelInfo? personnel,
         string? city,
         string? country) =>
-        ValidateCore(venueName, hotels, personnel, city, country, requireRequestContext: true);
+        ValidateCore(eventCenterName, hotels, personnel, city, country, requireRequestContext: true);
 
     private static ValidationResult ValidateCore(
-        string? venueName,
+        string? eventCenterName,
         IReadOnlyList<RequestedHotel>? hotels,
         PersonnelInfo? personnel,
         string? city,
@@ -64,15 +64,15 @@ public static class RecommendationRequestValidator
             ValidateRequiredText(country, "event-country-invalid", "Etkinlik ülkesi 2-100 karakter olmalıdır.", 2, 100, issues);
         }
 
-        if (string.IsNullOrWhiteSpace(venueName))
+        if (string.IsNullOrWhiteSpace(eventCenterName))
         {
-            issues.Add(new ValidationIssue("venue-name-required", "Etkinlik alanı adı zorunludur."));
+            issues.Add(new ValidationIssue("event-center-name-required", "Etkinlik alanı adı zorunludur."));
         }
-        else if (venueName.Trim().Length is < MinVenueNameLength or > MaxVenueNameLength)
+        else if (eventCenterName.Trim().Length is < MinEventCenterNameLength or > MaxEventCenterNameLength)
         {
             issues.Add(new ValidationIssue(
-                "venue-name-length",
-                $"Etkinlik alanı adı {MinVenueNameLength}-{MaxVenueNameLength} karakter olmalıdır."));
+                "event-center-name-length",
+                $"Etkinlik alanı adı {MinEventCenterNameLength}-{MaxEventCenterNameLength} karakter olmalıdır."));
         }
 
         if (hotels is null || hotels.Count == 0)

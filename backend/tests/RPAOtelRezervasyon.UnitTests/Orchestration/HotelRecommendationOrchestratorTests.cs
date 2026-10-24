@@ -15,7 +15,7 @@ namespace RPAOtelRezervasyon.UnitTests.Orchestration;
 
 public class HotelRecommendationOrchestratorTests
 {
-    private const string VenueName = "Kongre Merkezi";
+    private const string EventCenterName = "Kongre Merkezi";
     private const string NearHotel = "Yakın Otel";
     private const string FarHotel = "Uzak Otel";
 
@@ -85,7 +85,7 @@ public class HotelRecommendationOrchestratorTests
     public async Task Recommend_reports_unresolved_hotels_without_failing_the_request()
     {
         var geocoder = new FakeGeocodingProvider()
-            .With(VenueName, VenueLocation.Latitude, VenueLocation.Longitude)
+            .With(EventCenterName, VenueLocation.Latitude, VenueLocation.Longitude)
             .With(NearHotel, NearLocation.Latitude, NearLocation.Longitude);
 
         var (orchestrator, _, _) = CreateOrchestrator(geocoder: geocoder);
@@ -151,7 +151,7 @@ public class HotelRecommendationOrchestratorTests
     {
         var (orchestrator, _, _) = CreateOrchestrator();
         var request = new RecommendationRequest(
-            VenueName,
+            EventCenterName,
             [Hotel(NearHotel, 100m), Hotel("yakın otel", 999m), Hotel(NearHotel, 300m)],
             ValidRequest().Personnel,
             ValidRequest().GeocodingContext);
@@ -167,7 +167,7 @@ public class HotelRecommendationOrchestratorTests
     public async Task Recommend_reports_no_candidates_when_no_hotel_can_be_resolved()
     {
         var geocoder = new FakeGeocodingProvider()
-            .With(VenueName, VenueLocation.Latitude, VenueLocation.Longitude);
+            .With(EventCenterName, VenueLocation.Latitude, VenueLocation.Longitude);
 
         var (orchestrator, _, _) = CreateOrchestrator(geocoder: geocoder);
 
@@ -181,7 +181,7 @@ public class HotelRecommendationOrchestratorTests
     public async Task Recommend_rejects_an_invalid_request_before_calling_providers()
     {
         var (orchestrator, geocoder, router) = CreateOrchestrator();
-        var request = new RecommendationRequest(VenueName, []);
+        var request = new RecommendationRequest(EventCenterName, []);
 
         var result = await orchestrator.RecommendAsync(request, CancellationToken.None);
 
@@ -196,7 +196,7 @@ public class HotelRecommendationOrchestratorTests
     {
         var (orchestrator, _, _) = CreateOrchestrator();
         var request = new RecommendationRequest(
-            VenueName,
+            EventCenterName,
             [Hotel(NearHotel, 1250.50m, "EUR"), Hotel(FarHotel, 800m, "TRY")],
             ValidRequest().Personnel,
             ValidRequest().GeocodingContext);
@@ -215,12 +215,12 @@ public class HotelRecommendationOrchestratorTests
     public async Task Recommend_ranking_is_unaffected_by_prices()
     {
         var cheapNear = new RecommendationRequest(
-            VenueName,
+            EventCenterName,
             [Hotel(NearHotel, 0m, "TRY"), Hotel(FarHotel, 9_999_999m, "TRY")],
             ValidRequest().Personnel,
             ValidRequest().GeocodingContext);
         var priceyNear = new RecommendationRequest(
-            VenueName,
+            EventCenterName,
             [Hotel(NearHotel, 9_999_999m, "TRY"), Hotel(FarHotel, 0m, "TRY")],
             ValidRequest().Personnel,
             ValidRequest().GeocodingContext);
@@ -255,7 +255,7 @@ public class HotelRecommendationOrchestratorTests
     {
         var (orchestrator, geocoder, _) = CreateOrchestrator();
         var context = new GeocodingContext("Ankara", "Turkey");
-        var request = new RecommendationRequest(VenueName, [Hotel(NearHotel), Hotel(FarHotel)],
+        var request = new RecommendationRequest(EventCenterName, [Hotel(NearHotel), Hotel(FarHotel)],
             new PersonnelInfo("S12345", "Ada", "Yılmaz"), context);
 
         await orchestrator.RecommendAsync(request, CancellationToken.None);
@@ -268,7 +268,7 @@ public class HotelRecommendationOrchestratorTests
         new(name, amount, currency);
 
     private static RecommendationRequest ValidRequest() => new(
-        VenueName,
+        EventCenterName,
         [Hotel(NearHotel), Hotel(FarHotel)],
         new PersonnelInfo("S12345", "Ada", "Yılmaz"),
         new GeocodingContext("Ankara", "Turkey"));
@@ -277,7 +277,7 @@ public class HotelRecommendationOrchestratorTests
         CreateOrchestrator(FakeGeocodingProvider? geocoder = null, bool useCache = false)
     {
         geocoder ??= new FakeGeocodingProvider()
-            .With(VenueName, VenueLocation.Latitude, VenueLocation.Longitude)
+            .With(EventCenterName, VenueLocation.Latitude, VenueLocation.Longitude)
             .With(NearHotel, NearLocation.Latitude, NearLocation.Longitude)
             .With(FarHotel, FarLocation.Latitude, FarLocation.Longitude);
 

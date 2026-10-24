@@ -1,7 +1,9 @@
 using RPAOtelRezervasyon.Application.Modules.Delivery;
+using RPAOtelRezervasyon.Application.Modules.Airports;
 using RPAOtelRezervasyon.Application.Modules.DistanceRouting;
 using RPAOtelRezervasyon.Application.Modules.HotelGeocoding;
 using RPAOtelRezervasyon.Application.Modules.Ranking;
+using RPAOtelRezervasyon.Application.Modules.TaxiFares;
 using RPAOtelRezervasyon.Application.Modules.VenueGeocoding;
 using RPAOtelRezervasyon.Domain.Models;
 using RPAOtelRezervasyon.Domain.Validation;
@@ -18,7 +20,9 @@ public sealed class HotelRecommendationOrchestrator(
     HotelGeocodingService hotelGeocodingService,
     DistanceRoutingService distanceRoutingService,
     RankingService rankingService,
-    RecommendationDeliveryService deliveryService)
+    RecommendationDeliveryService deliveryService,
+    TaxiFareService? taxiFareService = null,
+    AirportSearchService? airportSearchService = null)
 {
     public async Task<RecommendationResult> RecommendAsync(
         RecommendationRequest request,
@@ -27,7 +31,7 @@ public sealed class HotelRecommendationOrchestrator(
         ArgumentNullException.ThrowIfNull(request);
 
         var validation = RecommendationRequestValidator.Validate(
-            request.VenueName,
+            request.EventCenterName,
             request.Hotels,
             request.Personnel,
             request.GeocodingContext.City,
@@ -37,38 +41,75 @@ public sealed class HotelRecommendationOrchestrator(
             return RecommendationResult.Invalid(validation);
         }
 
-        var venueName = request.VenueName.Trim();
+        if (request.TaskStartDate.HasValue != request.TaskEndDate.HasValue
+            || (request.TaskStartDate is { } startDate && request.TaskEndDate is { } endDate && endDate < startDate))
+        {
+            return RecommendationResult.Invalid(new ValidationResult([
+                new ValidationIssue("task-date-range-invalid", "Görev başlangıç ve bitiş tarihleri birlikte verilmeli; bitiş tarihi başlangıçtan önce olmamalıdır."),
+            ]));
+        }
+
+        var eventCenterName = request.EventCenterName.Trim();
 
         var hotels = ContractedHotel.DistinctByName(
             request.Hotels.Select(ToContractedHotel));
 
-        var venueOutcome = await venueGeocodingService
-            .ResolveAsync(venueName, request.GeocodingContext, cancellationToken)
+        var currencies = hotels.Select(hotel => hotel.Price.Currency).Distinct(StringComparer.Ordinal).ToArray();
+        if (taxiFareService is not null && currencies.Length != 1)
+        {
+            return RecommendationResult.Invalid(new ValidationResult([
+                new ValidationIssue("hotel-currency-mixed", "Ulaşım maliyetiyle toplam gecelik maliyet hesaplamak için tüm otel fiyatları aynı para biriminde olmalıdır."),
+            ]));
+        }
+
+        var eventCenterOutcome = await venueGeocodingService
+            .ResolveAsync(eventCenterName, request.GeocodingContext, cancellationToken)
             .ConfigureAwait(false);
 
-        if (venueOutcome.Status is OutcomeStatus.TransientError or OutcomeStatus.ProviderError)
+        if (eventCenterOutcome.Status is OutcomeStatus.TransientError or OutcomeStatus.ProviderError)
         {
-            return RecommendationResult.ProviderUnavailable(venueName);
+            return RecommendationResult.ProviderUnavailable(eventCenterName);
         }
 
-        if (venueOutcome.Status != OutcomeStatus.Found || venueOutcome.Location is null)
+        if (eventCenterOutcome.Status != OutcomeStatus.Found || eventCenterOutcome.Location is null)
         {
-            return RecommendationResult.VenueNotResolved(venueName);
+            return RecommendationResult.VenueNotResolved(eventCenterName);
         }
 
-        var venueLocation = venueOutcome.Location;
+        var eventCenterLocation = eventCenterOutcome.Location;
+        var targetLocation = eventCenterLocation;
+        if (request.PreferCityCenter)
+        {
+            var cityOutcome = await venueGeocodingService
+                .ResolveAsync(request.GeocodingContext.City!, new GeocodingContext(null, request.GeocodingContext.Country), cancellationToken)
+                .ConfigureAwait(false);
+            if (cityOutcome.Status is OutcomeStatus.TransientError or OutcomeStatus.ProviderError)
+            {
+                return RecommendationResult.ProviderUnavailable(eventCenterName);
+            }
+
+            if (cityOutcome.Status != OutcomeStatus.Found || cityOutcome.Location is null)
+            {
+                return RecommendationResult.VenueNotResolved(eventCenterName);
+            }
+
+            targetLocation = cityOutcome.Location;
+        }
+
         var hotelGeocoding = await hotelGeocodingService
-            .ResolveAsync(hotels, request.GeocodingContext, cancellationToken)
+            .ResolveAsync(hotels, new GeocodingContext(null, request.GeocodingContext.Country), cancellationToken)
             .ConfigureAwait(false);
 
-        var routingTasks = hotelGeocoding.Resolved
-            .Select(resolved => distanceRoutingService.ResolveMetricsAsync(
-                resolved.Location,
-                venueLocation,
-                cancellationToken))
-            .ToArray();
-
-        var metrics = await Task.WhenAll(routingTasks).ConfigureAwait(false);
+        var routeTasks = hotelGeocoding.Resolved.Select(async resolved =>
+        {
+            var targetMetricsTask = distanceRoutingService.ResolveMetricsAsync(resolved.Location, targetLocation, cancellationToken);
+            var eventCenterMetricsTask = targetLocation == eventCenterLocation
+                ? targetMetricsTask
+                : distanceRoutingService.ResolveMetricsAsync(resolved.Location, eventCenterLocation, cancellationToken);
+            await Task.WhenAll(targetMetricsTask, eventCenterMetricsTask).ConfigureAwait(false);
+            return (Target: await targetMetricsTask.ConfigureAwait(false), EventCenter: await eventCenterMetricsTask.ConfigureAwait(false));
+        }).ToArray();
+        var metrics = await Task.WhenAll(routeTasks).ConfigureAwait(false);
 
         var candidates = new List<HotelCandidate>();
         var unresolvedNames = new List<string>();
@@ -81,25 +122,76 @@ public sealed class HotelRecommendationOrchestrator(
         for (var index = 0; index < hotelGeocoding.Resolved.Count; index++)
         {
             var resolved = hotelGeocoding.Resolved[index];
-            var routeMetrics = metrics[index];
+            var routeMetrics = metrics[index].Target;
+            var eventCenterMetrics = metrics[index].EventCenter;
 
-            if (routeMetrics is null)
+            if (routeMetrics is null || (taxiFareService is not null && eventCenterMetrics is null))
             {
                 unresolvedNames.Add(resolved.Hotel.Name);
                 continue;
             }
 
-            candidates.Add(new HotelCandidate(resolved.Hotel, resolved.Location, routeMetrics));
+            TaxiFareEstimate? taxiFareEstimate = null;
+            if (taxiFareService is not null)
+            {
+                taxiFareEstimate = await taxiFareService.EstimateRoundTripAsync(
+                    request.GeocodingContext.City!,
+                    request.GeocodingContext.Country,
+                    resolved.Hotel.Price.Currency,
+                    eventCenterMetrics!,
+                    cancellationToken).ConfigureAwait(false);
+                if (taxiFareEstimate is null)
+                {
+                    return RecommendationResult.Invalid(new ValidationResult([
+                        new ValidationIssue("taxi-fare-currency-unavailable", "Taksi tarifesi para birimi otel fiyatlarıyla eşleşmedi; toplam gecelik maliyet hesaplanamadı."),
+                    ]));
+                }
+            }
+
+            candidates.Add(new HotelCandidate(resolved.Hotel, resolved.Location, routeMetrics, taxiFareEstimate));
         }
 
         if (candidates.Count == 0)
         {
-            return RecommendationResult.NoResolvedHotels(unresolvedNames, venueName);
+            return RecommendationResult.NoResolvedHotels(unresolvedNames, eventCenterName);
         }
 
-        var recommendation = rankingService.Select(candidates);
+        var stayNights = request.TaskStartDate is { } taskStart && request.TaskEndDate is { } taskEnd
+            ? taskEnd.DayNumber - taskStart.DayNumber
+            : 1;
+        var commuteDays = Math.Max(1, stayNights);
+        var candidatesWithTripCosts = await Task.WhenAll(candidates.Select(async candidate =>
+        {
+            var airport = airportSearchService is null
+                ? null
+                : await airportSearchService.FindNearestAsync(candidate.Location, cancellationToken).ConfigureAwait(false);
+            if (airport is not null && taxiFareService is not null)
+            {
+                var airportFare = await taxiFareService.EstimateRoundTripAsync(
+                    request.GeocodingContext.City!,
+                    request.GeocodingContext.Country,
+                    candidate.Hotel.Price.Currency,
+                    airport.Route,
+                    cancellationToken).ConfigureAwait(false);
+                airport = airport with { AirportHotelRoundTripFare = airportFare };
+            }
 
-        return deliveryService.Deliver(venueName, venueLocation, recommendation, unresolvedNames);
+            var tripCost = TripCostEstimate.Calculate(
+                candidate.Hotel.Price,
+                candidate.TaxiFareEstimate,
+                airport?.AirportHotelRoundTripFare,
+                stayNights,
+                commuteDays);
+
+            return new HotelCandidate(candidate.Hotel, candidate.Location, candidate.Metrics,
+                candidate.TaxiFareEstimate, airport, tripCost);
+        })).ConfigureAwait(false);
+
+        var recommendation = rankingService.Select(candidatesWithTripCosts);
+        var nearestAirport = recommendation.Selected.NearestAirport;
+
+        return deliveryService.Deliver(eventCenterName, targetLocation, recommendation, unresolvedNames,
+            request.PreferCityCenter, nearestAirport);
     }
 
     /// <summary>
